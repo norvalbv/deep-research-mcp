@@ -165,39 +165,59 @@ export async function runConsensusValidation(
   if (!geminiKey) return undefined;
 
   console.error('[Validation] Running consensus validation...');
-  
-  // Build paper summaries section with full available summaries
+
+  // Build comprehensive research data for consensus to evaluate
   const papersSummary = executionResult.arxivPapers?.papers?.length
     ? executionResult.arxivPapers.papers
-        .map((p, i) => `${i + 1}. "${p.title}" - ${p.summary}`)
-        .join('\n')
+        .map((p, i) => `${i + 1}. **${p.title}** (arXiv:${p.id})\n   ${p.summary}`)
+        .join('\n\n')
     : 'No papers found';
 
-  // Include more content from web and analysis (2000 chars each instead of 500)
-  const webContent = executionResult.perplexityResult?.content?.slice(0, 2000) || 'No web results';
+  const webContent = executionResult.perplexityResult?.content?.slice(0, 2500) || 'No web results';
+  const webSources = executionResult.perplexityResult?.sources?.length
+    ? `\n\n**Web Sources:**\n${executionResult.perplexityResult.sources.map((s, i) => `${i + 1}. ${s}`).join('\n')}`
+    : '';
+
+  const libraryDocs = executionResult.libraryDocs
+    ? `**Library Documentation (Context7):**\n${executionResult.libraryDocs.slice(0, 2000)}`
+    : 'No library documentation';
+
   const analysisContent = executionResult.deepThinking?.slice(0, 2000) || 'No deep analysis';
 
   const prompt = `Evaluate research findings for: "${query}"
 
-## Web Search Results
-${webContent}${executionResult.perplexityResult?.content?.length && executionResult.perplexityResult.content.length > 2000 ? '...[truncated]' : ''}
+**RESEARCH DATA GATHERED:**
 
-## Deep Analysis
-${analysisContent}${executionResult.deepThinking?.length && executionResult.deepThinking.length > 2000 ? '...[truncated]' : ''}
+**Web Search Results:**
+${webContent}${webSources}
 
-## Academic Papers Found (${executionResult.arxivPapers?.papers?.length || 0})
+**Academic Papers (arXiv):**
 ${papersSummary}
+
+${libraryDocs}
+
+**Deep Analysis:**
+${analysisContent}
 
 ---
 
-IMPORTANT: Base your assessment ONLY on the information provided above. Do NOT request additional files or articles - work with what you have.
+**YOUR TASK:**
 
-Assess the validity, completeness, and reliability of these findings. Consider:
-1. Do the sources agree or contradict each other?
-2. Are the findings well-supported with evidence?
-3. Are there obvious gaps that hurt the usefulness of this research?
+Evaluate the QUALITY and RELIABILITY of these research findings:
 
-Return a plain text assessment (3-4 paragraphs max).`;
+1. **Internal Consistency**: Do the different sources (web, papers, docs, analysis) agree or contradict?
+2. **Evidence Quality**: Are claims backed by verifiable sources (arXiv papers, documentation, web sources)?
+3. **Completeness**: Are there gaps in evidence or missing perspectives?
+4. **Reliability**: Can these findings be trusted? Are sources authoritative?
+5. **Actionability**: Is there enough concrete information to act on?
+
+**IMPORTANT:**
+- You can see ALL research data above (web + sources, arXiv papers, Context7 docs, analysis)
+- Evaluate based on what's PROVIDED, not what you think should exist
+- If arXiv papers are irrelevant to the query, point that out explicitly
+- If sources are missing or unclear, note that
+
+Provide a 2-3 paragraph consensus evaluation focusing on reliability and actionability.`;
 
   const response = await callLLM(prompt, {
     provider: 'gemini',

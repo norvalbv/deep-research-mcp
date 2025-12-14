@@ -27,8 +27,14 @@ export interface ExecutionResult {
   perplexityResult?: { content: string; sources?: string[] };
   deepThinking?: string;
   libraryDocs?: string;
-  arxivPapers?: ArxivResult;
-  subQuestionResults?: Array<{ question: string; perplexityResult?: { content: string }; deepThinking?: string; libraryDocs?: string }>;
+  arxivPapers?: ArxivResult;  // Shared across main + sub-Qs
+  subQuestionResults?: Array<{ 
+    question: string; 
+    perplexityResult?: { content: string }; 
+    deepThinking?: string; 
+    libraryDocs?: string;
+    // arxivPapers inherited from main result (not duplicated)
+  }>;
   docCache?: DocumentationCache;  // Store for validation pass
 }
 
@@ -74,12 +80,26 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
 
   if (shouldRunArxiv) {
     gatheringTasks.push((async () => {
-      console.error('[Exec] → arXiv search...');
-      const arxivResult = await arxivSearch(query, 5);
-      result.arxivPapers = arxivResult;
-      // Summarize papers in parallel (don't wait for other tasks)
+      console.error('[Exec] → arXiv search (unified for main + sub-Qs)...');
+      
+      // Build combined query for arxiv: main query + sub-questions
+      const allQueries = [query, ...(options?.subQuestions || [])];
+      const combinedQuery = allQueries.join(' ');
+      
+      console.error(`[Exec]   Planning papers for: main + ${options?.subQuestions?.length || 0} sub-Qs`);
+      
+      // Fetch UP TO 5 papers total (not per query)
+      const arxivResult = await arxivSearch(combinedQuery, 5);
+      
+      // Summarize papers once
       if (arxivResult.papers.length > 0 && env?.GEMINI_API_KEY) {
-        result.arxivPapers = { ...arxivResult, papers: await summarizePapers(arxivResult.papers, env.GEMINI_API_KEY) };
+        const summarizedPapers = await summarizePapers(arxivResult.papers, env.GEMINI_API_KEY);
+        result.arxivPapers = { ...arxivResult, papers: summarizedPapers };
+        
+        // Papers are now available for all sections (main + sub-Qs)
+        console.error(`[Exec]   ${summarizedPapers.length} papers summarized (shared across all queries)`);
+      } else {
+        result.arxivPapers = arxivResult;
       }
     })());
   }

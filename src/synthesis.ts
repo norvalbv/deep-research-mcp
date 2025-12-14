@@ -331,7 +331,8 @@ async function synthesizePhased(
         keyFindings,
         execution.subQuestionResults?.[idx],
         execution.libraryDocs,
-        options
+        options,
+        execution.arxivPapers  // Pass shared papers
       )
     )
   );
@@ -400,7 +401,8 @@ async function synthesizeSubQuestion(
   keyFindings: string,
   subQData: any,
   sharedLibraryDocs?: string,
-  options?: SynthesisOptions
+  options?: SynthesisOptions,
+  arxivPapers?: { papers: any[] }  // Shared papers from main execution
 ): Promise<string> {
   const sections: string[] = [];
 
@@ -422,6 +424,16 @@ ${subQData.perplexityResult.content.slice(0, 2000)}
 `);
   }
 
+  // Include shared arxiv papers if available
+  if (arxivPapers?.papers?.length) {
+    const paperSummaries = arxivPapers.papers
+      .map(p => `- **${p.title}** [arxiv:${p.id}]: ${p.summary}`)
+      .join('\n');
+    sections.push(`**Academic Papers [arxiv]:**
+${paperSummaries}
+`);
+  }
+
   if (subQData?.libraryDocs) {
     sections.push(`**Library Documentation [context7]:**
 ${subQData.libraryDocs.slice(0, 1500)}
@@ -440,6 +452,7 @@ Answer the sub-question thoroughly. Ensure your answer:
 - Aligns with the key findings above (don't contradict)
 - Uses inline citations: [perplexity:url], [context7:library], [arxiv:id]
 - Includes code examples if relevant
+- Leverages academic papers if relevant to this specific question
 - Is comprehensive and detailed
 
 Don't artificially limit your response length.`);

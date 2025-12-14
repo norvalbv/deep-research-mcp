@@ -158,12 +158,16 @@ export class ResearchController {
 
     // Build sections from structured synthesis output + validation data
     console.error('[Research] Building sections from structured output...');
-    const sections = this.buildSectionsFromResult(synthesisOutput, { challenge, consensus, sufficiency, improved });
+    const sections = this.buildSectionsFromResult(
+      synthesisOutput, 
+      { challenge, consensus, sufficiency, improved },
+      execution  // Pass execution for arxiv papers
+    );
     
     // Generate summaries for each section
     await generateSectionSummaries(sections, this.env.GEMINI_API_KEY);
 
-    // Build result (keep synthesisText for markdown rendering)
+    // Build result (keep synthesisText for markdown rendering + add arxiv to execution)
     const result: ResearchResult = {
       query, complexity, complexityReasoning: actionPlan.reasoning,
       actionPlan, execution, synthesis: synthesisOutput, consensus, challenge, sufficiency, improved,
@@ -225,7 +229,8 @@ export class ResearchController {
       consensus?: string;
       sufficiency?: SufficiencyVote;
       improved?: boolean;
-    }
+    },
+    execution?: { arxivPapers?: { papers: Array<{ id: string; title: string; summary: string; url: string }> } }
   ): Record<string, Section> {
     const sections: Record<string, Section> = {};
     
@@ -253,6 +258,19 @@ export class ResearchController {
         title: 'Additional Insights',
         content: output.additionalInsights,
         summary: '',
+      };
+    }
+    
+    // Academic Papers section (if present)
+    if (execution?.arxivPapers?.papers && execution.arxivPapers.papers.length > 0) {
+      const arxivContent = execution.arxivPapers.papers
+        .map((paper, i) => `**${i + 1}. ${paper.title}**\n- arXiv ID: ${paper.id}\n- Summary: ${paper.summary}\n- URL: ${paper.url}`)
+        .join('\n\n');
+      
+      sections.arxiv_papers = {
+        title: 'Academic Papers',
+        content: arxivContent + '\n\n*Use `read_paper` or `download_paper` tools for full paper content.*',
+        summary: `${execution.arxivPapers.papers.length} academic papers found and summarized`,
       };
     }
     

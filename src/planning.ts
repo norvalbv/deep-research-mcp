@@ -124,7 +124,6 @@ ${techStack?.length ? `Available Tech Stack: ${techStack.join(', ')}\n` : ''}
 Available tools:
 - perplexity: Web search
 - context7: Library docs (if question is about specific library/framework)
-- arxiv: Academic papers (if theoretical/research-heavy)
 
 Return JSON:
 {
@@ -136,9 +135,9 @@ Return JSON:
 }
 
 Rules:
-1. Use context7 ONLY if question is specifically about a library in tech_stack
-2. Use arxiv ONLY if question needs academic/theoretical research
-3. Always include perplexity for web search
+1. Use context7 ONLY if question is specifically about a library in tech_stack OR involves code/implementation
+2. Always include perplexity for web search
+3. **If question involves "how to", "implement", or shows code** → include context7
 4. Keep it simple - most sub-Qs just need perplexity
 
 Return ONLY JSON, no explanation.
@@ -239,12 +238,13 @@ Return a JSON action plan with this structure:
 
 Rules:
 1. Complexity 1-2: Use perplexity only or + basic reasoning
-2. Complexity 3: Add context7 (if tech_stack provided)
+2. Complexity 3+: Add context7 if tech_stack provided OR includeCodeExamples is true
 3. Complexity 4: Add consensus validation
 4. Complexity 5: Add arxiv research papers
 5. Focus ONLY on the main query - sub-questions will be planned separately
 6. sharedDocumentation.topics should be common syntax/basics if tech_stack provided
 7. Avoid tools for papers_read papers
+8. **IMPORTANT**: If query involves code/implementation, ALWAYS include context7 for accurate syntax
 
 Important: Do NOT plan for sub-questions - they will get their own planning calls.
 
