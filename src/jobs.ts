@@ -1,6 +1,7 @@
 import { writeFile, readFile, mkdir, unlink } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
+import { Section, ExecutiveSummary } from './types/index.js';
 
 // Jobs directory for file-based persistence
 export const JOBS_DIR = join(homedir(), '.research-jobs');
@@ -12,6 +13,12 @@ export interface StructuredResearchResult {
   criticalGaps?: string[];
   sources?: string[];
   papers?: Array<{ id: string; title: string; summary: string; url: string }>;
+  
+  // NEW: Sectioned content for on-demand reading
+  sections?: Record<string, Section>;
+  
+  // NEW: Executive summary for quick overview
+  executiveSummary?: ExecutiveSummary;
 }
 
 export interface ResearchJob {

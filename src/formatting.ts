@@ -2,9 +2,10 @@
  * Format research results as clean markdown
  */
 
-import { ComplexityLevel } from './types/index.js';
+import { ComplexityLevel, Section } from './types/index.js';
 import { ExecutionResult } from './execution.js';
 import { ResearchActionPlan } from './planning.js';
+import { SynthesisOutput } from './synthesis.js';
 
 // Re-define locally to avoid circular import
 interface ChallengeResult {
@@ -27,7 +28,7 @@ export interface ResearchResult {
   complexityReasoning: string;
   actionPlan?: ResearchActionPlan;
   execution: ExecutionResult;
-  synthesis: string;
+  synthesis: SynthesisOutput;  // Now structured JSON output
   consensus?: string;
   challenge?: ChallengeResult;
   sufficiency?: SufficiencyVote;
@@ -35,18 +36,36 @@ export interface ResearchResult {
 }
 
 /**
- * Format research result as markdown
- * NOTE: Raw data is NOT dumped - synthesis is the main content
+ * Format research result as markdown from structured synthesis
+ * Renders the structured JSON output into clean markdown for display
+ * 
+ * Returns markdown string only (sections are built directly in controller)
  */
 export function formatMarkdown(result: ResearchResult): string {
   const sections: string[] = [];
 
   sections.push(`# Research Results: ${result.query}\n`);
 
-  // MAIN CONTENT: Synthesis (this IS the answer, not raw data)
-  sections.push(`## Key Findings\n`);
-  sections.push(result.synthesis);
+  // Render structured synthesis as markdown
+  sections.push(`## Overview\n`);
+  sections.push(result.synthesis.overview);
   sections.push('');
+
+  // Render sub-questions as dedicated sections
+  if (result.synthesis.subQuestions) {
+    for (const [key, value] of Object.entries(result.synthesis.subQuestions)) {
+      sections.push(`## ${value.question}\n`);
+      sections.push(value.answer);
+      sections.push('');
+    }
+  }
+
+  // Additional insights
+  if (result.synthesis.additionalInsights && result.synthesis.additionalInsights.trim()) {
+    sections.push(`## Additional Insights\n`);
+    sections.push(result.synthesis.additionalInsights);
+    sections.push('');
+  }
 
   // Academic Papers - just references, not full content (already synthesized above)
   if (result.execution.arxivPapers && result.execution.arxivPapers.papers.length > 0) {

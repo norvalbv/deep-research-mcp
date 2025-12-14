@@ -7,12 +7,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { searchLibraryDocs } from './clients/context7.js';
 import { createArxivClient, ArxivClient } from './clients/arxiv.js';
 import { arxivSearch } from './services/arxiv.js';
-import { ComplexityLevel } from './types/index.js';
+import { ComplexityLevel, Section, ExecutiveSummary } from './types/index.js';
 import { createFallbackPlan, generateConsensusPlan, ResearchActionPlan } from './planning.js';
 import { executeResearchPlan } from './execution.js';
-import { synthesizeFindings } from './synthesis.js';
+import { synthesizeFindings, SynthesisOutput } from './synthesis.js';
 import { runChallenge, runConsensusValidation, runSufficiencyVote, ChallengeResult, SufficiencyVote } from './validation.js';
 import { formatMarkdown, ResearchResult } from './formatting.js';
+import { generateSectionSummaries } from './sectioning.js';
 
 export interface ResearchOptions {
   subQuestions?: string[];
@@ -35,13 +36,22 @@ export class ResearchController {
     this.env = env || {};
   }
 
+  getEnv(): Record<string, string> {
+    return this.env;
+  }
+
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
     console.error('[Research] Initializing...');
     this.isInitialized = true;
   }
 
-  async execute({ query, enrichedContext, depthLevel, options }: { query: string; enrichedContext: string; depthLevel: ComplexityLevel; options?: ResearchOptions }): Promise<{ markdown: string; result: ResearchResult }> {
+  async execute({ query, enrichedContext, depthLevel, options }: { query: string; enrichedContext: string; depthLevel: ComplexityLevel; options?: ResearchOptions }): Promise<{ 
+    markdown: string; 
+    result: ResearchResult;
+    sections: Record<string, Section>;
+    executiveSummary: ExecutiveSummary;
+  }> {
     if (!this.isInitialized) await this.initialize();
 
     // Step 1: Consensus Planning
@@ -57,8 +67,8 @@ export class ResearchController {
       env: this.env,
     });
 
-    // Step 3: Synthesize findings into unified answer
-    let synthesis = await synthesizeFindings(
+    // Step 3: Synthesize findings into unified answer (structured JSON)
+    let synthesisOutput = await synthesizeFindings(
       this.env.GEMINI_API_KEY,
       query,
       enrichedContext,
@@ -74,9 +84,12 @@ export class ResearchController {
       subQuestions: options?.subQuestions,
     };
     
+    // Convert structured output to text for challenge/consensus
+    const synthesisText = this.synthesisOutputToText(synthesisOutput);
+    
     // Only run consensus for depth >= 4
     const [challenge, consensus] = await Promise.all([
-      runChallenge(this.env.GEMINI_API_KEY, query, synthesis, challengeContext),
+      runChallenge(this.env.GEMINI_API_KEY, query, synthesisText, challengeContext),
       complexity >= 4 
         ? runConsensusValidation(this.env.GEMINI_API_KEY, query, execution) 
         : Promise.resolve(undefined),
@@ -89,7 +102,7 @@ export class ResearchController {
     
     if (challenge?.hasSignificantGaps) {
       console.error('[Research] Running sufficiency vote (synthesis vs critique)...');
-      sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, synthesis, challenge);
+      sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, synthesisText, challenge);
 
       // Step 6: Re-synthesis if critique wins (max 1 iteration)
       if (sufficiency && !sufficiency.sufficient && sufficiency.criticalGaps.length > 0) {
@@ -100,15 +113,17 @@ export class ResearchController {
         await this.gatherDataForGaps(execution, sufficiency.criticalGaps, query);
         
         // Re-synthesize with gap awareness
-        synthesis = await this.resynthesizeWithGaps(
+        synthesisOutput = await this.resynthesizeWithGaps(
           query, enrichedContext, execution, options, sufficiency.criticalGaps
         );
         
+        const newSynthesisText = this.synthesisOutputToText(synthesisOutput);
+        
         // Final challenge (no more iterations)
-        const finalChallenge = await runChallenge(this.env.GEMINI_API_KEY, query, synthesis, challengeContext);
+        const finalChallenge = await runChallenge(this.env.GEMINI_API_KEY, query, newSynthesisText, challengeContext);
         
         if (finalChallenge?.hasSignificantGaps) {
-          sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, synthesis, finalChallenge);
+          sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, newSynthesisText, finalChallenge);
         } else {
           // No gaps after re-synthesis, synthesis wins
           sufficiency = {
@@ -131,13 +146,154 @@ export class ResearchController {
       };
     }
 
-    // Build result
+    // Build sections from structured synthesis output
+    console.error('[Research] Building sections from structured output...');
+    const sections = this.buildSectionsFromSynthesis(synthesisOutput);
+    
+    // Generate summaries for each section
+    await generateSectionSummaries(sections, this.env.GEMINI_API_KEY);
+
+    // Build result (keep synthesisText for markdown rendering)
     const result: ResearchResult = {
       query, complexity, complexityReasoning: actionPlan.reasoning,
-      actionPlan, execution, synthesis, consensus, challenge, sufficiency, improved,
+      actionPlan, execution, synthesis: synthesisOutput, consensus, challenge, sufficiency, improved,
     };
 
-    return { markdown: formatMarkdown(result), result };
+    // Format markdown from structured data
+    console.error('[Research] Rendering markdown from structured sections...');
+    const markdown = formatMarkdown(result);
+    
+    // Build executive summary
+    const executiveSummary: ExecutiveSummary = {
+      queryAnswered: sufficiency?.sufficient ?? true,
+      confidence: this.determineConfidence(complexity, sufficiency),
+      keyRecommendation: this.extractKeyRecommendation(synthesisOutput.overview),
+      budgetFeasibility: this.extractBudgetFeasibility(enrichedContext, synthesisOutput.overview),
+      availableSections: Object.keys(sections),
+    };
+
+    return { markdown, result, sections, executiveSummary };
+  }
+
+  /**
+   * Convert structured synthesis output to plain text for challenge/validation
+   */
+  private synthesisOutputToText(output: SynthesisOutput): string {
+    const parts: string[] = [];
+    
+    // Overview
+    parts.push('## Overview\n');
+    parts.push(output.overview);
+    parts.push('');
+    
+    // Sub-questions
+    if (output.subQuestions) {
+      for (const [key, value] of Object.entries(output.subQuestions)) {
+        parts.push(`## ${value.question}\n`);
+        parts.push(value.answer);
+        parts.push('');
+      }
+    }
+    
+    // Additional insights
+    if (output.additionalInsights) {
+      parts.push('## Additional Insights\n');
+      parts.push(output.additionalInsights);
+      parts.push('');
+    }
+    
+    return parts.join('\n');
+  }
+
+  /**
+   * Build Section objects from structured synthesis output
+   */
+  private buildSectionsFromSynthesis(output: SynthesisOutput): Record<string, Section> {
+    const sections: Record<string, Section> = {};
+    
+    // Overview section
+    sections.overview = {
+      title: 'Overview',
+      content: output.overview,
+      summary: '', // Will be filled by generateSectionSummaries
+    };
+    
+    // Sub-question sections
+    if (output.subQuestions) {
+      for (const [key, value] of Object.entries(output.subQuestions)) {
+        sections[key] = {
+          title: value.question,
+          content: value.answer,
+          summary: '', // Will be filled by generateSectionSummaries
+        };
+      }
+    }
+    
+    // Additional insights section (if present)
+    if (output.additionalInsights && output.additionalInsights.trim()) {
+      sections.additional_insights = {
+        title: 'Additional Insights',
+        content: output.additionalInsights,
+        summary: '',
+      };
+    }
+    
+    return sections;
+  }
+
+  /**
+   * Determine confidence level based on complexity and validation
+   */
+  private determineConfidence(
+    complexity: ComplexityLevel,
+    sufficiency?: SufficiencyVote
+  ): 'high' | 'medium' | 'low' {
+    if (sufficiency && !sufficiency.sufficient) return 'low';
+    if (complexity >= 4 && (sufficiency?.votesFor ?? 0) >= 2) return 'high';
+    if (complexity >= 3) return 'medium';
+    return 'medium';
+  }
+
+  /**
+   * Extract key recommendation (first 1-2 sentences from synthesis)
+   */
+  private extractKeyRecommendation(synthesis: string): string {
+    const sentences = synthesis
+      .split(/[.!?]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 20);
+    
+    if (sentences.length === 0) return 'See full report for recommendations.';
+    
+    const recommendation = sentences.slice(0, 2).join('. ') + '.';
+    return recommendation.length > 200 
+      ? recommendation.substring(0, 197) + '...'
+      : recommendation;
+  }
+
+  /**
+   * Extract budget feasibility from context or synthesis
+   */
+  private extractBudgetFeasibility(
+    enrichedContext: string | undefined,
+    synthesis: string
+  ): string | undefined {
+    // Check if context mentions budget/time constraints
+    if (!enrichedContext) return undefined;
+    
+    const contextLower = enrichedContext.toLowerCase();
+    if (contextLower.includes('hours') || contextLower.includes('budget') || contextLower.includes('time')) {
+      // Try to extract budget mention from synthesis
+      const synthesisLower = synthesis.toLowerCase();
+      if (synthesisLower.includes('realistic') || synthesisLower.includes('feasible')) {
+        return 'Realistic based on constraints';
+      }
+      if (synthesisLower.includes('challenging') || synthesisLower.includes('ambitious')) {
+        return 'Challenging but achievable';
+      }
+    }
+    
+    return undefined;
   }
 
   /**
@@ -149,7 +305,7 @@ export class ResearchController {
     execution: any,
     options: ResearchOptions | undefined,
     gaps: string[]
-  ): Promise<string> {
+  ): Promise<SynthesisOutput> {
     const gapContext = `\n\nCRITICAL GAPS TO ADDRESS:\n${gaps.map((g, i) => `${i + 1}. ${g}`).join('\n')}\n\nYou MUST address these gaps in your synthesis.`;
     
     return synthesizeFindings(

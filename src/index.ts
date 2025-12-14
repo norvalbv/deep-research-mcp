@@ -13,10 +13,12 @@ import {
   saveJob,
   loadJob,
   ResearchJob,
+  JOBS_DIR,
 } from './jobs.js';
-import { buildPanelOutput, generateFilename, buildEnrichedContext } from './panel-output.js';
+import { buildPanelOutput, generateFilename, buildEnrichedContext, generateReportId } from './panel-output.js';
 import { registerReport } from './storage/report-registry.js';
 import { compressText } from './clients/llm.js';
+import { formatCondensedView, generateSectionSummaries } from './sectioning.js';
 
 // Create the MCP server
 const server = new McpServer({
@@ -523,50 +525,110 @@ Note: Use read_paper if you want to analyze the paper content immediately - this
 );
 
 // ==================== READ REPORT TOOL ====================
-// Read specific lines from research reports using citation format
+// Read specific lines or sections from research reports using unified citation format
 
 server.registerTool(
   'read_report',
   {
-    title: 'Read Research Report Lines',
-    description: `Read specific lines from a research report using citation format.
+    title: 'Read Research Report (Condensed or Sectioned)',
+    description: `Read research reports with support for condensed views, specific sections, or full content.
     
-**Input formats supported:**
-- Full citation: "[R-135216:5-19]" or "R-135216:5-19" - returns lines 5-19 from report R-135216. It's recommended to only read part of the report as reading the entire report can bloat context and cause errors.
-- Report ID only: "R-135216" - returns full report
-- Line range with report_path: { lines: "5-19", report_path: "/path/to/report.md" }
+**Default behavior (condensed view) - RECOMMENDED:**
+- Returns executive summary + section index (~200 words vs ~5k words)
+- Prevents context bloat and improves AI reasoning
+- Gives you a clear overview without overwhelming your context
 
-Use this when personas cite research and you need to verify the actual content.`,
+**When to read specific sections:**
+- Use section citations like \`R-135216:overview\` or \`R-135216:q1\` to read just what you need
+- Much more efficient than reading the entire report
+- Keeps your context clean and focused
+
+**When to read full report (LAST RESORT):**
+- User explicitly asks to see everything
+- You need to analyze critique/validation details in depth
+- Condensed view + sections aren't sufficient (very rare)
+
+**Unified citation format:**
+- \`R-135216\` - condensed view (executive summary + section index) ✅ DEFAULT
+- \`R-135216:overview\` - read specific section
+- \`R-135216:q1\` - read sub-question section
+- \`R-135216:section:5-19\` - read lines 5-19 within section
+- \`R-135216:5-19\` - read line range (legacy format)
+
+**Full report:**
+- Set full=true ONLY when absolutely necessary
+- Full reports are ~5k words and will bloat your context
+
+Use this to efficiently read research without bloating context.`,
     inputSchema: {
-      citation: z.string().optional().describe('Citation in format [R-NNNNNNN:N-N] or R-NNNNNNN or just R-NNNNNNN'),
+      citation: z.string().optional().describe('Unified citation format: "R-135216" (condensed), "R-135216:section_id" (specific section), "R-135216:section_id:5-19" (lines within section), or "R-135216:5-19" (legacy line range)'),
       report_path: z.string().optional().describe('Direct path to report file (alternative to citation)'),
-      lines: z.string().optional().describe('Line range in format "N-N" (e.g., "5-19")'),
+      full: z.boolean().optional().describe('Set to true ONLY if user explicitly asks to read the entire report. Default condensed view is recommended.'),
     },
   },
-  async ({ citation, report_path, lines }) => {
+  async ({ citation, report_path, full }) => {
     try {
       let targetPath: string | undefined = report_path;
+      let reportId: string | undefined;
+      let sectionId: string | undefined;
       let lineRange: { start: number; end: number } | undefined;
 
-      // Parse citation if provided
+      // Parse unified citation format
       if (citation) {
-        // Remove brackets if present: [R-135216:5-19] -> R-135216:5-19
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:parseCitation',message:'Parsing citation',data:{citation},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
+        // #endregion
+        
+        // Remove brackets if present: [R-135216:section:5-19] -> R-135216:section:5-19
         const cleanCitation = citation.replace(/^\[|\]$/g, '');
         
-        // Parse report ID and line range
-        const match = cleanCitation.match(/^(R-\d+)(?::(\d+)-(\d+))?$/);
-        if (!match) {
+        // Split by colons to parse components
+        const parts = cleanCitation.split(':');
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:splitParts',message:'Citation parts',data:{parts,partsLength:parts.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
+        // #endregion
+        
+        // First part must be report ID (R-NNNNNN)
+        if (!parts[0] || !/^R-\d+$/.test(parts[0])) {
           return {
             content: [{
               type: 'text' as const,
-              text: `Invalid citation format: "${citation}". Expected format: [R-NNNNNNN:N-N] or R-NNNNNNN`
+              text: `Invalid citation format: "${citation}". Expected format: R-NNNNNNN, R-NNNNNNN:section_id, R-NNNNNNN:section_id:N-N, or R-NNNNNNN:N-N`
             }]
           };
         }
-
-        const reportId = match[1];
-        const startLine = match[2] ? parseInt(match[2]) : undefined;
-        const endLine = match[3] ? parseInt(match[3]) : undefined;
+        
+        reportId = parts[0];
+        
+        // Parse remaining parts
+        if (parts.length === 2) {
+          // Could be: R-135216:section_id OR R-135216:5-19
+          const lineMatch = parts[1].match(/^(\d+)-(\d+)$/);
+          if (lineMatch) {
+            // Line range format: R-135216:5-19
+            lineRange = { start: parseInt(lineMatch[1]), end: parseInt(lineMatch[2]) };
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:lineRange',message:'Detected line range',data:{lineRange},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
+            // #endregion
+          } else {
+            // Section ID format: R-135216:key_findings
+            sectionId = parts[1];
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:sectionId',message:'Detected section ID',data:{sectionId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
+            // #endregion
+          }
+        } else if (parts.length === 3) {
+          // Format: R-135216:section_id:5-19
+          sectionId = parts[1];
+          const lineMatch = parts[2].match(/^(\d+)-(\d+)$/);
+          if (lineMatch) {
+            lineRange = { start: parseInt(lineMatch[1]), end: parseInt(lineMatch[2]) };
+          }
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:sectionWithRange',message:'Detected section with line range',data:{sectionId,lineRange},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
+          // #endregion
+        }
 
         // Find report by ID using registry
         const { getReportById } = await import('./storage/report-registry.js');
@@ -582,20 +644,12 @@ Use this when personas cite research and you need to verify the actual content.`
         }
 
         targetPath = report.path;
-        if (startLine !== undefined && endLine !== undefined) {
-          lineRange = { start: startLine, end: endLine };
-        }
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:foundReport',message:'Found report path',data:{targetPath,reportId,sectionId,lineRange},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
+        // #endregion
       }
 
-      // Parse lines parameter if provided
-      if (lines && !lineRange) {
-        const match = lines.match(/^(\d+)-(\d+)$/);
-        if (match) {
-          lineRange = { start: parseInt(match[1]), end: parseInt(match[2]) };
-        }
-      }
-
-      // Read the report file
+      // Validate target path
       if (!targetPath) {
         return {
           content: [{
@@ -605,38 +659,160 @@ Use this when personas cite research and you need to verify the actual content.`
         };
       }
 
-      const { readFileSync, existsSync } = await import('fs');
+      // Check if it's a job JSON file (new structure) or markdown file (legacy)
+      const isJobJson = targetPath.endsWith('.json');
       
-      if (!existsSync(targetPath)) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Report file not found: ${targetPath}`
-          }]
-        };
-      }
+      if (isJobJson) {
+        // NEW: Read from job JSON with structured sections
+        const { readFileSync, existsSync } = await import('fs');
+        
+        if (!existsSync(targetPath)) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Report file not found: ${targetPath}`
+            }]
+          };
+        }
 
-      const content = readFileSync(targetPath, 'utf-8');
-      const allLines = content.split('\n');
-
-      let resultLines: string[];
-      if (lineRange) {
-        // Return specific line range (1-indexed)
-        resultLines = allLines.slice(lineRange.start - 1, lineRange.end);
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Lines ${lineRange.start}-${lineRange.end} from ${targetPath}:\n\n${resultLines.join('\n')}`
-          }]
-        };
+        const jobData = JSON.parse(readFileSync(targetPath, 'utf-8'));
+        const structured = jobData.structured;
+        
+        // Check if report has new sectioned structure
+        if (structured?.sections && structured?.executiveSummary) {
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:hasStructure',message:'Report has sectioned structure',data:{hasSectionId:!!sectionId,hasLineRange:!!lineRange,sectionCount:Object.keys(structured.sections).length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
+          // #endregion
+          
+          // NEW STRUCTURE: Support condensed/sectioned reading
+          
+          if (sectionId) {
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:readingSection',message:'Reading specific section',data:{sectionId,availableSections:Object.keys(structured.sections)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
+            // #endregion
+            
+            // Return specific section (with optional line range within section)
+            const { formatSectionView } = await import('./sectioning.js');
+            const section = structured.sections[sectionId];
+            
+            if (!section) {
+              const available = Object.keys(structured.sections).join(', ');
+              return {
+                content: [{
+                  type: 'text' as const,
+                  text: `Section "${sectionId}" not found. Available sections: ${available}`
+                }]
+              };
+            }
+            
+            // If line range specified, extract those lines from section content
+            if (lineRange) {
+              const sectionLines = section.content.split('\n');
+              const extractedLines = sectionLines.slice(lineRange.start - 1, lineRange.end);
+              return {
+                content: [{
+                  type: 'text' as const,
+                  text: `# Section: ${section.title} (${reportId}) - Lines ${lineRange.start}-${lineRange.end}\n\n${extractedLines.join('\n')}`
+                }]
+              };
+            }
+            
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:returnSection',message:'Returning section',data:{sectionId,contentLength:section.content.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
+            // #endregion
+            
+            return {
+              content: [{
+                type: 'text' as const,
+                text: formatSectionView(reportId || 'Unknown', sectionId, section)
+              }]
+            };
+          } else if (lineRange) {
+            // Line range on full report (legacy behavior)
+            const allLines = (jobData.result || '').split('\n');
+            const extractedLines = allLines.slice(lineRange.start - 1, lineRange.end);
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Lines ${lineRange.start}-${lineRange.end} from ${reportId}:\n\n${extractedLines.join('\n')}`
+              }]
+            };
+          } else if (full) {
+            // Return full report
+            return {
+              content: [{
+                type: 'text' as const,
+                text: jobData.result || 'Report content not available'
+              }]
+            };
+          } else {
+            // Return condensed view (default)
+            const { formatCondensedView } = await import('./sectioning.js');
+            return {
+              content: [{
+                type: 'text' as const,
+                text: formatCondensedView(
+                  reportId || 'Unknown',
+                  jobData.query,
+                  structured.executiveSummary,
+                  structured.sections
+                )
+              }]
+            };
+          }
+        } else {
+          // OLD STRUCTURE: Fall back to full markdown (or line range if specified)
+          if (lineRange) {
+            const allLines = (jobData.result || '').split('\n');
+            const extractedLines = allLines.slice(lineRange.start - 1, lineRange.end);
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Lines ${lineRange.start}-${lineRange.end}:\n\n${extractedLines.join('\n')}`
+              }]
+            };
+          }
+          return {
+            content: [{
+              type: 'text' as const,
+              text: jobData.result || 'Report content not available'
+            }]
+          };
+        }
       } else {
-        // Return full report
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Full report from ${targetPath}:\n\n${content}`
-          }]
-        };
+        // LEGACY: Read from markdown file
+        const { readFileSync, existsSync } = await import('fs');
+        
+        if (!existsSync(targetPath)) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Report file not found: ${targetPath}`
+            }]
+          };
+        }
+
+        const content = readFileSync(targetPath, 'utf-8');
+        const allLines = content.split('\n');
+
+        if (lineRange) {
+          // Return specific line range (1-indexed)
+          const resultLines = allLines.slice(lineRange.start - 1, lineRange.end);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Lines ${lineRange.start}-${lineRange.end} from ${targetPath}:\n\n${resultLines.join('\n')}`
+            }]
+          };
+        } else {
+          // Return full report
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Full report from ${targetPath}:\n\n${content}`
+            }]
+          };
+        }
       }
     } catch (error) {
       return {
@@ -824,8 +1000,19 @@ server.registerTool(
         
         // Store structured result directly (no parsing needed later)
         const structuredResult = result.result;
+        
+        // Convert SynthesisOutput to text for backward compatibility
+        const synthesisText = structuredResult.synthesis.overview + 
+          (structuredResult.synthesis.subQuestions 
+            ? '\n\n' + Object.values(structuredResult.synthesis.subQuestions)
+                .map(sq => `## ${sq.question}\n${sq.answer}`).join('\n\n')
+            : '') +
+          (structuredResult.synthesis.additionalInsights 
+            ? '\n\n## Additional Insights\n' + structuredResult.synthesis.additionalInsights
+            : '');
+        
         job.structured = {
-          synthesis: structuredResult.synthesis,
+          synthesis: synthesisText,
           critiques: structuredResult.challenge?.critiques,
           criticalGaps: structuredResult.sufficiency?.criticalGaps,
           sources: structuredResult.execution.perplexityResult?.sources,
@@ -835,9 +1022,12 @@ server.registerTool(
             summary: p.summary,
             url: p.url,
           })),
+          // NEW: Store sections and executive summary
+          sections: result.sections,
+          executiveSummary: result.executiveSummary,
         };
         
-        // Always save report file (needed for for_panel and generally useful)
+          // Always save report file (needed for for_panel and generally useful)
         try {
           const reportDir = join(homedir(), 'research-reports');
           const filename = generateFilename(query);
@@ -847,9 +1037,14 @@ server.registerTool(
           job.reportPath = filepath;
           console.error(`[Jobs] Report saved to: ${filepath}`);
           
-          // Register in report registry for future reference
+          // Register JOB FILE (not markdown) in report registry for section reading
+          // The job JSON has structured sections, markdown is just for reading
+          const jobFilePath = join(JOBS_DIR, `${job.id}.json`);
+          const reportId = generateReportId(filepath); // Extract from markdown filename
           registerReport({
-            path: filepath,
+            path: jobFilePath,  // Job JSON for structured access
+            markdownPath: filepath, // Markdown for human reading
+            reportId: reportId, // Report ID for lookups
             timestamp: new Date().toISOString(),
             query: query,
             summary: job.structured?.synthesis?.slice(0, 200) + '...' || 'Research completed',
@@ -899,15 +1094,36 @@ server.registerTool(
 **Status values:**
 - pending: Job is queued
 - running: Research is in progress  
-- completed: Research finished, result is included
+- completed: Research finished, condensed view returned by default
 - failed: Research failed, error is included
+
+**IMPORTANT - Default behavior prevents context bloat:**
+- By default, returns a condensed executive summary + section index (~200 words)
+- This gives you enough information to understand the results without bloating context
+- DO NOT read the full report unless absolutely necessary
+
+**When to use full=true (rare):**
+- User explicitly asks for complete details
+- You need to analyze the entire validation/critique process
+- Condensed view doesn't contain enough detail for a specific question
+
+**Result format:**
+- Default: Returns condensed executive summary + section index (~200 words vs ~5k words)
+- Set full=true to get complete report (~5k words) - USE SPARINGLY
+
+**After research completes:**
+1. Check this status endpoint (you'll get the condensed view automatically)
+2. Read the executive summary to understand if the query was answered
+3. Use \`read_report\` with section citations to read specific parts (e.g., \`R-135216:key_findings\`)
+4. ONLY use full=true if user explicitly requests the complete report
 
 Poll this endpoint every ~30 seconds until status is "completed" or "failed".`,
     inputSchema: {
       job_id: z.string().describe('The job_id returned from start_research'),
+      full: z.boolean().optional().describe('Set to true ONLY if user explicitly asks for the complete report. Default condensed view is usually sufficient.'),
     },
   },
-  async ({ job_id }) => {
+  async ({ job_id, full }) => {
     // First check in-memory cache
     let job = jobs.get(job_id);
     
@@ -963,6 +1179,46 @@ Poll this endpoint every ~30 seconds until status is "completed" or "failed".`,
           ],
         };
       }
+      
+      // NEW: Return condensed view by default if sections are available
+      if (!full && job.structured?.sections && job.structured?.executiveSummary && job.reportPath) {
+        const reportId = generateReportId(job.reportPath);
+        
+        // Check if summaries are actually summaries (not full content)
+        // If any summary is >1000 chars, regenerate all summaries on-the-fly
+        const sections = job.structured.sections;
+        const needsRegeneration = Object.values(sections).some(
+          (section: any) => !section.summary || section.summary.length > 1000
+        );
+        
+        if (needsRegeneration) {
+          console.error('[Jobs] Old job detected, regenerating summaries on-the-fly...');
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:check_research_status:regenerate',message:'Regenerating summaries for old job',data:{jobId:job.id,sectionCount:Object.keys(sections).length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'FIX'})}).catch(()=>{});
+          // #endregion
+          
+          const ctrl = getController();
+          await generateSectionSummaries(sections, ctrl.getEnv().GEMINI_API_KEY);
+        }
+        
+        const condensedView = formatCondensedView(
+          reportId,
+          job.query,
+          job.structured.executiveSummary,
+          sections
+        );
+        
+        return {
+          content: [
+            {
+              type: 'text',
+              text: condensedView + `\n\n---\n**Report saved to**: \`${job.reportPath}\``,
+            },
+          ],
+        };
+      }
+      
+      // Return full report if requested or if sections not available
       response.result = job.result;
       if (job.reportPath) {
         response.report_path = job.reportPath;

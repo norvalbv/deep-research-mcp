@@ -4,6 +4,8 @@ export interface LLMConfig {
   provider: LLMProvider;
   model: string;
   apiKey: string;
+  timeout?: number;  // Timeout in milliseconds (default: 30000)
+  maxOutputTokens?: number;  // Max output tokens (default: 10000)
 }
 
 export interface LLMResponse {
@@ -36,12 +38,18 @@ export class LLMError extends Error {
 async function callGemini(
   prompt: string,
   model: string,
-  apiKey: string
+  apiKey: string,
+  timeout: number = 30000,
+  maxOutputTokens: number = 10000
 ): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'llm.ts:callGemini',message:'Calling Gemini API',data:{promptLength:prompt.length,timeout,maxOutputTokens,model},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'F,H'})}).catch(()=>{});
+  // #endregion
+  
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
     const response = await fetch(url, {
@@ -49,7 +57,7 @@ async function callGemini(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 10000 },
+        generationConfig: { temperature: 0.7, maxOutputTokens },
       }),
       signal: controller.signal,
     });
@@ -59,9 +67,16 @@ async function callGemini(
     }
 
     const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const finishReason = data.candidates?.[0]?.finishReason;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'llm.ts:callGemini:response',message:'Gemini response received',data:{textLength:text.length,finishReason,hasText:!!text},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'F,G'})}).catch(()=>{});
+    // #endregion
+    
+    return text;
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timeoutId);
   }
 }
 
@@ -71,10 +86,12 @@ async function callGemini(
 async function callOpenAI(
   prompt: string,
   model: string,
-  apiKey: string
+  apiKey: string,
+  timeout: number = 30000,
+  maxOutputTokens: number = 3000
 ): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -86,7 +103,7 @@ async function callOpenAI(
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: prompt }],
-        max_completion_tokens: 3000,
+        max_completion_tokens: maxOutputTokens,
       }),
       signal: controller.signal,
     });
@@ -98,7 +115,7 @@ async function callOpenAI(
     const data = await response.json();
     return data.choices?.[0]?.message?.content || '';
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timeoutId);
   }
 }
 
@@ -113,14 +130,16 @@ export async function callLLM(
   options?: LLMCallOptions
 ): Promise<LLMResponse> {
   const { critical = false, minContentLength = 10 } = options || {};
+  const timeout = config.timeout || 30000;
+  const maxOutputTokens = config.maxOutputTokens || 10000;
   
   try {
     let content: string;
     
     if (config.provider === 'gemini') {
-      content = await callGemini(prompt, config.model, config.apiKey);
+      content = await callGemini(prompt, config.model, config.apiKey, timeout, maxOutputTokens);
     } else {
-      content = await callOpenAI(prompt, config.model, config.apiKey);
+      content = await callOpenAI(prompt, config.model, config.apiKey, timeout, maxOutputTokens);
     }
     
     // Fail-fast: throw if content is too short and this is a critical call
@@ -213,18 +232,29 @@ export function getVotingConfigs(geminiKey?: string): LLMConfig[] {
   ];
 }
 
-export const compressText = async (text: string, maxLength: number, geminiKey?: string): Promise<string> => {
-  if (text.length <= maxLength) {
+export const compressText = async (text: string, maxWords: number, geminiKey?: string): Promise<string> => {
+  // Quick check: if text is already short enough, return as-is
+  const wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
+  if (wordCount <= maxWords) {
     return text;
   }
 
   const key = geminiKey || '';
   if (!key) {
     console.error('[Compress Text] ERROR: GEMINI_API_KEY not provided');
-    return text;
+    // Fallback: extract first N words
+    return text.split(/\s+/).slice(0, maxWords).join(' ') + '...';
   }
 
-  // Summarize paper to be max length.
-  const summary = await callLLM(`You must summarize the following text to be ${maxLength} characters. Aim to keep the text as close to the original as possible by only stripping out non-essential information. ${text}`, { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key });
+  // Summarize text to be approximately maxWords words
+  const summary = await callLLM(
+    `Summarize the following text to be approximately ${maxWords} words. Focus on the most important information and insights. Be concise but preserve key details.\n\nText to summarize:\n${text}`, 
+    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key }
+  );
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'llm.ts:compressText',message:'Compressed text',data:{originalWords:wordCount,targetWords:maxWords,compressedWords:summary.content.split(/\s+/).length,compressedLength:summary.content.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A_FIX'})}).catch(()=>{});
+  // #endregion
+  
   return summary.content;
 };

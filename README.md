@@ -216,7 +216,7 @@ The MCP server exposes five tools:
 | `output_format` | enum | `summary`, `detailed`, or `actionable_steps` |
 | `include_code_examples` | boolean | Whether to fetch code examples |
 | `date_range` | string | Preferred date range (e.g., "2024-2025") |
-| `for_panel` | boolean | Return structured JSON for agent-chat panel integration (includes `report_id` for citations) |
+<!-- TODO | `for_panel` | boolean | Return structured JSON for agent-chat panel integration (includes `report_id` for citations) | -->
 
 
 ## 🔍 How It Works

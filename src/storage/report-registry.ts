@@ -6,7 +6,9 @@ const REGISTRY_DIR = join(homedir(), '.research-mcp');
 const REGISTRY_FILE = join(REGISTRY_DIR, 'report-registry.json');
 
 export interface ReportMetadata {
-  path: string;
+  path: string;        // Job JSON path for structured access
+  markdownPath?: string; // Optional markdown path for human reading
+  reportId: string;    // Report ID (e.g., "R-015823")
   timestamp: string;
   query: string;
   summary: string; // 1-2 sentences
@@ -106,14 +108,17 @@ export function getReportByPath(path: string): ReportMetadata | undefined {
 }
 
 /**
- * Get report by ID (from timestamp in filename)
- * Report ID format: R-HHMMSS (e.g., R-135216)
+ * Get report by ID
+ * Report ID format: R-HHMMSS (e.g., R-135216) or R-015823
  */
 export function getReportById(reportId: string): ReportMetadata | undefined {
   const registry = loadRegistry();
-  // Extract timestamp from report ID (remove 'R-' prefix)
+  // First try direct match by reportId field
+  let report = registry.reports.find(r => (r as any).reportId === reportId);
+  if (report) return report;
+  
+  // Fallback: search by timestamp in path (legacy)
   const timestamp = reportId.replace(/^R-/, '');
-  // Find report whose path contains this timestamp
   return registry.reports.find(r => r.path.includes(timestamp));
 }
 
