@@ -4,7 +4,7 @@ import { arxivSearch, ArxivPaper, ArxivResult } from './services/arxiv.js';
 import { callLLM } from './clients/llm.js';
 import { searchLibraryDocs } from './clients/context7.js';
 import { ComplexityLevel, DocumentationCache, RootPlan, SubQuestionPlan } from './types/index.js';
-import { ResearchActionPlan, extractContent, planSubQuestion } from './planning.js';
+import { ResearchActionPlan, extractContent } from './planning.js';
 
 export interface ExecutionContext {
   query: string;
@@ -135,35 +135,30 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
   if (options?.subQuestions?.length) {
     gatheringTasks.push((async () => {
       const subQuestions = options.subQuestions!;
-      console.error(`[Exec] → ${subQuestions.length} sub-questions (with individual planning)...`);
+      console.error(`[Exec] → ${subQuestions.length} sub-questions (inheriting main plan tools)...`);
       
-      // Plan all sub-questions in parallel
-      const subQPlans = await Promise.all(
-        subQuestions.map((q) => 
-          planSubQuestion(env?.GEMINI_API_KEY || '', q, enrichedContext, options.techStack)
-        )
-      );
-      
-      // Execute each sub-Q with its plan
+      // Execute each sub-Q using inherited tools from main plan
       result.subQuestionResults = await Promise.all(
         subQuestions.map(async (question, idx) => {
           const sub: any = { question };
-          const plan = subQPlans[idx];
           
-          console.error(`[Exec]   Sub-Q ${idx + 1}: ${plan.tools.join(', ')}`);
+          console.error(`[Exec]   Sub-Q ${idx + 1}: ${question.slice(0, 60)}...`);
           
-          // Execute based on plan
-          if (plan.tools.includes('perplexity')) {
+          // Inherit main plan's tool strategy
+          const needsPerplexity = actionPlan.toolsToUse.includes('perplexity');
+          const needsContext7 = actionPlan.toolsToUse.includes('context7');
+          
+          // Execute based on inherited plan
+          if (needsPerplexity) {
             sub.perplexityResult = await perplexitySearch(withContext(question, enrichedContext), env?.PERPLEXITY_API_KEY);
           }
           
-          // Sub-Q specific Context7 call (if planned)
-          if (plan.tools.includes('context7') && context7Client) {
-            const lib = plan.params?.library || rootPlan.sharedDocumentation.libraries[0];
-            const topic = plan.params?.context7Query || question;
+          // Sub-Q specific Context7 call (if main plan uses it)
+          if (needsContext7 && context7Client) {
+            const lib = options?.techStack?.[0] || rootPlan.sharedDocumentation.libraries[0];
             
             if (lib) {
-              const specificDocs = await searchLibraryDocs(context7Client, lib, topic);
+              const specificDocs = await searchLibraryDocs(context7Client, lib, question);
               sub.libraryDocs = specificDocs;
               
               // Store in cache for validation pass
@@ -171,7 +166,7 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
                 docCache.subQSpecific[idx] = {
                   content: specificDocs,
                   library: lib,
-                  topic
+                  topic: question
                 };
               }
             }
@@ -322,27 +317,13 @@ async function fetchSharedDocumentation(
  * Extract RootPlan from action plan (if new structure present)
  */
 function extractRootPlan(actionPlan: ResearchActionPlan, options?: any): RootPlan {
-  if (actionPlan._rawPlan) {
-    return {
-      mainQuery: actionPlan._rawPlan.mainQuery || {
-        complexity: actionPlan.complexity,
-        steps: actionPlan.steps
-      },
-      subQuestions: [],  // Sub-Qs will be planned separately
-      sharedDocumentation: actionPlan._rawPlan.sharedDocumentation || {
-        libraries: options?.techStack || [],
-        topics: ['getting started']
-      }
-    };
-  }
-  
-  // Fallback: construct from legacy structure
+  // Construct from plan structure (user reverted _rawPlan architecture)
   return {
     mainQuery: {
       complexity: actionPlan.complexity,
       steps: actionPlan.steps
     },
-    subQuestions: [],  // Sub-Qs will be planned separately via planSubQuestion
+    subQuestions: [],  // Sub-Qs inherit tools from main plan
     sharedDocumentation: {
       libraries: options?.techStack || [],
       topics: ['getting started']

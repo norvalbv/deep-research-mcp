@@ -6,6 +6,7 @@ export interface LLMConfig {
   apiKey: string;
   timeout?: number;  // Timeout in milliseconds (default: 30000)
   maxOutputTokens?: number;  // Max output tokens (default: 10000)
+  temperature?: number;  // Temperature for sampling (default: 0.7)
 }
 
 export interface LLMResponse {
@@ -40,7 +41,8 @@ async function callGemini(
   model: string,
   apiKey: string,
   timeout: number = 30000,
-  maxOutputTokens: number = 10000
+  maxOutputTokens: number = 10000,
+  temperature: number = 0.7
 ): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   
@@ -53,7 +55,7 @@ async function callGemini(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens },
+        generationConfig: { temperature, maxOutputTokens },
       }),
       signal: controller.signal,
     });
@@ -121,12 +123,13 @@ export async function callLLM(
   const { critical = false, minContentLength = 10 } = options || {};
   const timeout = config.timeout || 30000;
   const maxOutputTokens = config.maxOutputTokens || 10000;
+  const temperature = config.temperature ?? 0.7;
   
   try {
     let content: string;
     
     if (config.provider === 'gemini') {
-      content = await callGemini(prompt, config.model, config.apiKey, timeout, maxOutputTokens);
+      content = await callGemini(prompt, config.model, config.apiKey, timeout, maxOutputTokens, temperature);
     } else {
       content = await callOpenAI(prompt, config.model, config.apiKey, timeout, maxOutputTokens);
     }

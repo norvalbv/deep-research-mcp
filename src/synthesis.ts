@@ -65,7 +65,8 @@ export async function synthesizeFindings(
       model: 'gemini-2.5-flash',
       apiKey: geminiKey,
       timeout: 120000,
-      maxOutputTokens: 32000
+      maxOutputTokens: 32000,
+      temperature: 0.2  // Lower for deterministic, specific outputs
     });
     
     return parseMarkdownSections(response.content, options?.subQuestions);
@@ -89,6 +90,8 @@ function buildSynthesisPrompt(
   const sections: string[] = [];
 
   sections.push(`You are synthesizing research findings${mainQueryOnly ? ' for the MAIN QUERY ONLY (sub-questions handled separately)' : ''}.
+
+**PERSONA**: Act as a senior production engineer delivering deployable solutions.
 
 **${mainQueryOnly ? 'Main Research Query' : 'Original Research Query'}:** ${query}
 `);
@@ -124,10 +127,38 @@ ${enrichedContext}
   }
 
   if (options?.includeCodeExamples) {
-    sections.push(`**Code Examples Required:**
-- Include practical, working code examples where relevant
-- Show implementation patterns and best practices
-- Use markdown code blocks with language tags
+    sections.push(`**Code Examples Required (PRODUCTION-READY):**
+
+### CRITICAL: DO NOT use TODO, FIXME, placeholders, or "# example" comments.
+Every function must be FULLY IMPLEMENTED and executable.
+
+**Required in ALL code:**
+- Error handling with try/catch
+- Retry logic with exponential backoff for API calls
+- Type hints/annotations
+- Logging for debugging
+
+**CORRECT example:**
+\`\`\`python
+async def api_call_with_retry(prompt: str, max_retries: int = 3) -> str:
+    for attempt in range(max_retries):
+        try:
+            response = await client.chat(prompt)
+            logger.info(f"Success on attempt {attempt + 1}")
+            return response.content
+        except RateLimitError:
+            wait = 2 ** attempt
+            logger.warning(f"Rate limited, waiting {wait}s")
+            await asyncio.sleep(wait)
+    raise Exception("All retries failed")
+\`\`\`
+
+**WRONG example (DO NOT generate like this):**
+\`\`\`python
+def process_data(data):
+    # TODO: implement actual processing
+    pass
+\`\`\`
 `);
   }
 
@@ -154,8 +185,11 @@ ${paperSummaries}
   }
 
   if (execution.libraryDocs) {
-    sections.push(`**Library Documentation [context7]:**
+    sections.push(`**Library Documentation [context7] - USE FOR EXACT SYNTAX:**
 ${execution.libraryDocs.slice(0, 2000)}
+
+**IMPORTANT**: Use the EXACT API calls, imports, and patterns shown above.
+Do NOT hallucinate alternative APIs. If the docs show \`client.foo()\`, use that, not \`client.bar()\`.
 `);
   }
 
@@ -188,11 +222,47 @@ ${extractContent(execution.deepThinking).slice(0, 2000)}
 
 Write a comprehensive answer to the main query. Be thorough and detailed.
 
+**MANDATORY REQUIREMENTS:**
+
+1. **Numeric Specificity** - ALL thresholds must be exact numbers with units:
+   - BAD: "high accuracy", "fast response", "sufficient coverage"
+   - GOOD: ">85% F1-score", "<200ms p95 latency", "99.9% uptime"
+   - Show calculation: "How computed: baseline × factor = threshold"
+
+2. **Decision Clarity** - When multiple approaches exist:
+   - State the options compared
+   - Pick ONE clear recommendation
+   - Provide rationale with cost/time tradeoffs
+
+3. **Success Criteria** - For each recommendation:
+   - Measurable metric with threshold
+   - How to test/verify
+   - Definition of "done"
+
+4. **Troubleshooting** - Anticipate failures:
+   - "If X happens → do Y (time cost: +N hours)"
+   - At least 2-3 common failure scenarios
+
+5. **Integration Specifics** - When tech_stack provided:
+   - Use Context7 documentation to provide EXACT API calls, not generic patterns
+   - Specify package versions (e.g., "langsmith>=0.1.0")
+   - Show actual import statements and initialization code
+
 **Important:**
 - Include code examples where relevant (in markdown blocks)
 - Use inline citations: [perplexity:url], [context7:library-name], [arxiv:paper-id]
 - This is ONLY for the main query - sub-questions handled separately
 - Be comprehensive, don't artificially limit length
+
+**CONTRADICTION CHECK** - Before finalizing, verify:
+- Time estimates across sections ADD UP (e.g., if 3 phases of 10hrs each, total should be 30hrs)
+- All numeric thresholds are consistent (don't say ">90%" in one place and ">85%" elsewhere for same metric)
+
+**SELF-CHECK:**
+- [ ] All thresholds are numeric with units
+- [ ] No contradictions in your response
+- [ ] Time estimates add up correctly
+- [ ] Every recommendation has ONE clear answer (not "maybe A or B")
 `);
   } else {
     // Build section format instructions for full synthesis
@@ -218,6 +288,32 @@ ${subQuestionSections}
 ## Additional Insights
 [Optional: extra recommendations, caveats, or implementation tips]
 
+**MANDATORY REQUIREMENTS:**
+
+1. **Numeric Specificity** - ALL thresholds must be exact numbers with units:
+   - BAD: "high accuracy", "fast response", "sufficient coverage"
+   - GOOD: ">85% F1-score", "<200ms p95 latency", "99.9% uptime"
+   - Show calculation: "How computed: baseline × factor = threshold"
+
+2. **Decision Clarity** - When multiple approaches exist:
+   - State the options compared
+   - Pick ONE clear recommendation
+   - Provide rationale with cost/time tradeoffs
+
+3. **Success Criteria** - For each recommendation:
+   - Measurable metric with threshold
+   - How to test/verify
+   - Definition of "done"
+
+4. **Troubleshooting** - Anticipate failures:
+   - "If X happens → do Y (time cost: +N hours)"
+   - At least 2-3 common failure scenarios
+
+5. **Integration Specifics** - When tech_stack provided:
+   - Use Context7 documentation to provide EXACT API calls, not generic patterns
+   - Specify package versions (e.g., "langsmith>=0.1.0")
+   - Show actual import statements and initialization code
+
 **Important:**
 - Use the EXACT section delimiters shown above: <!-- SECTION:name -->
 - Be comprehensive and thorough in each section
@@ -229,6 +325,17 @@ ${subQuestionSections}
   - Example: "LangSmith provides dataset management [context7:langsmith] which allows version control [perplexity:langsmith-docs]"
 - Cite sources when making specific claims or showing code examples
 - Don't artificially limit your response length
+
+**CONTRADICTION CHECK** - Before finalizing, verify:
+- Time estimates across sections ADD UP (e.g., if 3 phases of 10hrs each, total should be 30hrs)
+- If main says "use approach A" and sub-question says "avoid A", reconcile with ONE clear recommendation
+- All numeric thresholds are consistent (don't say ">90%" in one place and ">85%" elsewhere for same metric)
+
+**SELF-CHECK:**
+- [ ] All thresholds are numeric with units
+- [ ] No contradictions between sections
+- [ ] Time estimates add up correctly
+- [ ] Every recommendation has ONE clear answer (not "maybe A or B")
 `);
   }
 
@@ -310,7 +417,8 @@ async function synthesizePhased(
     model: 'gemini-2.5-flash',
     apiKey: geminiKey,
     timeout: 60000,
-    maxOutputTokens: 16000
+    maxOutputTokens: 16000,
+    temperature: 0.2  // Lower for deterministic, specific outputs
   });
 
   const result: SynthesisOutput = {
@@ -462,7 +570,8 @@ Don't artificially limit your response length.`);
     model: 'gemini-2.5-flash',
     apiKey: geminiKey,
     timeout: 60000,
-    maxOutputTokens: 8000
+    maxOutputTokens: 8000,
+    temperature: 0.2  // Lower for deterministic, specific outputs
   });
 
   return response.content.trim();

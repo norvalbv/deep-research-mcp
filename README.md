@@ -13,10 +13,12 @@ Research MCP Server is a Model Context Protocol (MCP) server that provides **con
 ### Why Research MCP?
 
 - **Consensus Planning**: 2-5 LLMs vote on research strategy + independent planning for each sub-question
+- **Production-Ready Reports**: Enforced numeric specificity, no placeholder code, explicit success criteria
 - **Phased Synthesis**: Token-efficient approach with key findings extraction (~40% fewer tokens)
 - **Code Validation**: Post-synthesis validation against Context7 docs catches hallucinated code
 - **Inline Citations**: Every claim sourced (`[perplexity:url]`, `[context7:lib]`, `[arxiv:id]`)
 - **Multi-Model Validation**: Critical challenge + consensus validation by multiple LLMs
+- **Actionability Checklist**: Synthesis evaluated for specificity, completeness, and contradiction-free output
 - **Context-Efficient Reports**: Sectioned architecture with on-demand reading (prevents AI context bloat)
 - **Dynamic Execution**: Custom research plans with parallel processing
 - **Multi-Source Synthesis**: Combines Perplexity, arXiv, Context7, and direct LLM reasoning
@@ -278,6 +280,11 @@ The research system uses a sophisticated phased approach designed for token effi
 - Independent sub-Q planning prevents bias from root plan
 - Each sub-Q gets optimal tool selection
 - Key findings injection ensures coherent, non-contradictory answers
+- Synthesis LLMs use temperature=0.2 for deterministic, specific outputs
+- Production engineer persona prompt for deployable solutions
+- Explicit numeric specificity mandates (no "high", "fast", "good")
+- Few-shot examples enforce production-ready code (no TODO/FIXME)
+- Checklist-based validation audits actionability before delivery
 
 ### Research Flow Diagram
 

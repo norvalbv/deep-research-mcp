@@ -65,19 +65,19 @@ function buildChallengePrompt(
   }
 ): string {
   const constraintsSection = context?.constraints?.length 
-    ? `\nCONSTRAINTS TO RESPECT:\n${context.constraints.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
+    ? `\nCONSTRAINTS:\n${context.constraints.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
     : '';
   
   const subQuestionsSection = context?.subQuestions?.length
-    ? `\nSUB-QUESTIONS THAT MUST BE ANSWERED:\n${context.subQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`
+    ? `\nSUB-QUESTIONS:\n${context.subQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`
     : '';
 
-  return `You are a CRITICAL REVIEWER. Your job is to ATTACK this research synthesis and find gaps.
+  return `You are a CRITICAL REVIEWER using a checklist-based audit.
 
 ORIGINAL QUERY:
 ${query}
 
-${context?.enrichedContext ? `ORIGINAL CONTEXT:\n${context.enrichedContext}\n` : ''}${constraintsSection}${subQuestionsSection}
+${context?.enrichedContext ? `CONTEXT:\n${context.enrichedContext}\n` : ''}${constraintsSection}${subQuestionsSection}
 
 ---
 
@@ -86,26 +86,27 @@ ${synthesis}
 
 ---
 
-YOUR TASK: Find gaps between what was ASKED and what was ANSWERED.
+**ACTIONABILITY CHECKLIST** (flag ANY failures):
 
-Evaluate:
-1. What questions from the query were NOT answered or poorly answered?
-2. What constraints were IGNORED or not respected?
-3. What sub-questions (if any) were skipped or inadequately addressed?
-4. What claims in the synthesis lack evidence or sources?
-5. What's missing for the user to take ACTION on this research?
+□ **Specificity**: Are ALL thresholds numeric with units? (not "high", "fast", "good")
+□ **Code Completeness**: Are code examples fully implemented? (no TODO/FIXME)
+□ **Consistency**: Do time/cost estimates ADD UP across sections?
+□ **Executability**: Can someone execute this WITHOUT 10+ clarifying questions?
+□ **Decision Clarity**: Is there ONE clear recommendation per choice?
+□ **Success Criteria**: Is there a measurable definition of "done"?
 
-BE HARSH BUT FAIR. Only list REAL gaps that hurt usability.
+**EVALUATE:**
+1. Which checklist items FAILED? (be specific, cite examples)
+2. What constraints were IGNORED?
+3. What sub-questions were poorly answered?
+4. Are there CONTRADICTIONS between sections?
 
-If the synthesis fully addresses the input with no significant gaps, respond with:
-"No significant gaps found."
+If ALL items pass, respond: "No significant gaps found."
 
-Otherwise, return a NUMBERED LIST of specific critique points:
-1. [First gap/issue]
-2. [Second gap/issue]
-...
-
-Do NOT return JSON. Return plain text critique points only.`.trim();
+Otherwise, return NUMBERED critique points:
+1. [FAILED: Specificity] "response time should be under X" - X undefined
+2. [FAILED: Code] Line 45 contains "# TODO"
+...`.trim();
 }
 
 /**
