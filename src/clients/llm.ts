@@ -49,7 +49,7 @@ async function callGemini(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
+        generationConfig: { temperature: 0.7, maxOutputTokens: 10000 },
       }),
       signal: controller.signal,
     });
@@ -194,37 +194,37 @@ export async function callLLMsParallel(
  * Get default configs for parallel voting (5 calls)
  * Uses only Gemini for now since it's more reliable for structured outputs
  */
-export function getVotingConfigs(): LLMConfig[] {
-  const geminiKey = process.env.GEMINI_API_KEY || '';
+export function getVotingConfigs(geminiKey?: string): LLMConfig[] {
+  const key = geminiKey || '';
   
-  if (!geminiKey) {
-    console.error('[LLM] ERROR: GEMINI_API_KEY not found in environment');
+  if (!key) {
+    console.error('[LLM] ERROR: GEMINI_API_KEY not provided');
     return [];
   }
   
   // 5x Gemini Flash for consistent, fast voting
   // Using same model multiple times still provides diversity through temperature
   return [
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: geminiKey },
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: geminiKey },
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: geminiKey },
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: geminiKey },
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: geminiKey },
+    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
+    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
+    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
+    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
+    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
   ];
 }
 
-export const compressText = async (text: string, maxLength: number): Promise<string> => {
+export const compressText = async (text: string, maxLength: number, geminiKey?: string): Promise<string> => {
   if (text.length <= maxLength) {
     return text;
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY || '';
-  if (!geminiKey) {
-    console.error('[Compress Text] ERROR: GEMINI_API_KEY not found in environment');
+  const key = geminiKey || '';
+  if (!key) {
+    console.error('[Compress Text] ERROR: GEMINI_API_KEY not provided');
     return text;
   }
 
   // Summarize paper to be max length.
-  const summary = await callLLM(`You must summarize the following text to be ${maxLength} characters. Aim to keep the text as close to the original as possible by only stripping out non-essential information. ${text}`, { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: geminiKey });
+  const summary = await callLLM(`You must summarize the following text to be ${maxLength} characters. Aim to keep the text as close to the original as possible by only stripping out non-essential information. ${text}`, { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key });
   return summary.content;
 };

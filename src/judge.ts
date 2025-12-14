@@ -2,8 +2,7 @@
  * LLM Judge for selecting the best research plan from multiple proposals
  */
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { palChat } from './clients/pal.js';
+import { callLLM } from './clients/llm.js';
 import { ResearchActionPlan } from './planning.js';
 
 interface PlanningProposal {
@@ -16,7 +15,7 @@ interface PlanningProposal {
  * Select the best plan using an LLM as judge
  */
 export async function selectBestPlan(
-  palClient: Client,
+  geminiKey: string,
   proposals: PlanningProposal[],
   query: string,
   enrichedContext?: string
@@ -30,8 +29,12 @@ export async function selectBestPlan(
   const judgePrompt = buildJudgePrompt(query, proposals, enrichedContext);
 
   try {
-    const response = await palChat(palClient, judgePrompt, 'gemini-2.5-flash');
-    const selectedIndex = parseJudgeResponse(response, proposals.length);
+    const response = await callLLM(judgePrompt, {
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',
+      apiKey: geminiKey
+    });
+    const selectedIndex = parseJudgeResponse(response.content, proposals.length);
 
     console.error(`[Judge] Selected plan ${selectedIndex + 1} from ${proposals[selectedIndex].model}`);
     return proposals[selectedIndex];
@@ -70,18 +73,23 @@ ${plansDescription}
 3. **Coverage**: Will it gather sufficient information?
 4. **Practicality**: Is the step sequence logical?
 
-**Return JSON only:**
+IMPORTANT: Return ONLY valid JSON with no other text. No markdown code blocks, no explanation.
+
+Format:
 {
   "selected": <1-${proposals.length}>,
   "reasoning": "Why this plan is best"
-}
-`.trim();
+}`.trim();
 }
 
 function parseJudgeResponse(response: string, maxIndex: number): number {
   try {
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON');
+    // Remove markdown code blocks if present
+    let cleaned = response.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+    
+    // Try to find JSON
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON found in response');
 
     const parsed = JSON.parse(jsonMatch[0]);
     const selected = parseInt(parsed.selected, 10);
@@ -89,11 +97,14 @@ function parseJudgeResponse(response: string, maxIndex: number): number {
     if (selected >= 1 && selected <= maxIndex) {
       return selected - 1; // Convert to 0-indexed
     }
+    
+    throw new Error(`Selected ${selected} is out of range (1-${maxIndex})`);
   } catch (error) {
     console.error('[Judge] Parse error:', error);
   }
 
-  return 0; // Default to first plan
+  // Fallback to first plan
+  return 0;
 }
 
 

@@ -15,7 +15,7 @@ Research MCP Server is a Model Context Protocol (MCP) server that provides **con
 - **Consensus Planning**: 3-5 LLMs vote on complexity and create dynamic action plans (not fixed templates)
 - **Multi-Model Validation**: Every finding validated by multiple LLMs + critical challenge phase
 - **Dynamic Execution**: Executes custom research plans with parallel processing
-- **Multi-Source Synthesis**: Combines Perplexity, arXiv, Context7, and PAL reasoning
+- **Multi-Source Synthesis**: Combines Perplexity, arXiv, Context7, and direct LLM reasoning
 - **Context-Aware**: Avoids redundancy using `papers_read`, `key_findings`, `rejected_approaches`
 - **Clean Output**: Structured markdown (no raw JSON dumps)—shows action plan + validated findings
 
@@ -37,18 +37,11 @@ Research MCP Server is a Model Context Protocol (MCP) server that provides **con
 ### Prerequisites
 
 - **Node.js 18+**
-- **Python 3.8+** (for PAL MCP client subprocess)
-- **uv** - Python package installer (required for PAL client):
-  ```bash
-  pip install uv
-  # or on macOS:
-  brew install uv
-  ```
-  Verify installation: `uvx --version`
 - API keys for:
   - [Perplexity API](https://www.perplexity.ai/)
   - [Google AI (Gemini)](https://ai.google.dev/)
   - [OpenAI API](https://platform.openai.com/)
+  - [Context7](https://context.ai/) (for library documentation)
 
 ### Quick Start
 
@@ -85,7 +78,8 @@ Add to your MCP configuration file:
         "PERPLEXITY_API_KEY": "your-key",
         "GEMINI_API_KEY": "your-key",
         "OPENAI_API_KEY": "your-key",
-        "ARXIV_STORAGE_PATH": "/path/to/storage/"
+        "ARXIV_STORAGE_PATH": "/path/to/storage/",
+        "CONTEXT7_API_KEY": "your-key"
       }
     }
   }
@@ -242,7 +236,7 @@ graph TD
     F --> I
     G --> I
     H --> I
-    I --> J[PAL Deep Thinking]
+    I --> J[Deep Analysis]
     J --> K[SYNTHESIS PHASE]
     K --> L[LLM Synthesizes Unified Answer]
     L --> M{Depth ≥ 3?}
@@ -257,31 +251,6 @@ graph TD
 ```
 
 ### Common Issues
-
-#### PAL Client Not Connecting / "uvx not found"
-
-The PAL client is a subprocess that requires `uvx` (part of the `uv` package manager):
-
-```bash
-# Ensure Python 3.8+ is installed
-python3 --version
-
-# Install uv package manager
-pip install uv
-# or on macOS:
-brew install uv
-
-# Test uvx is available
-uvx --version
-
-# Test PAL server can spawn
-uvx --from git+https://github.com/BeehiveInnovations/pal-mcp-server.git pal-mcp-server --help
-```
-
-**Common issues:**
-- **"uvx not found"**: Install `uv` using the commands above
-- **"Not connected"**: Usually means PAL subprocess failed to start—check that `uvx` is in your PATH
-- **API key errors**: PAL needs `GEMINI_API_KEY` and `OPENAI_API_KEY` in environment variables
 
 #### Perplexity API Errors
 
@@ -357,7 +326,7 @@ Note: Paths with spaces are properly handled in JSON arrays. The issue is usuall
 
 **Steps Executed**:
 1. **perplexity**: Search for recent approaches and best practices _(parallel)_
-2. **pal_deep_thinking**: Analyze web findings for technical insights
+2. **deep_analysis**: Analyze web findings for technical insights
 3. **context7**: Fetch React and TypeScript documentation _(parallel)_
 4. **arxiv**: Search academic papers on evaluation datasets
 5. **consensus**: Validate findings across multiple models
@@ -369,7 +338,7 @@ Note: Paths with spaces are properly handled in JSON arrays. The issue is usuall
 2. https://example.com/source2
 
 ## Deep Analysis
-[PAL reasoning—clean text, no continuation_id or JSON wrappers]
+[Deep technical analysis based on web findings and research data]
 
 ## Library Documentation
 [Context7 code examples and API docs]
@@ -399,7 +368,6 @@ To read the full paper, download and read it using the read_paper or download_pa
 
 ## This MCP is built on top of other MCP servers and tools
 
-- [PAL MCP Server](https://github.com/BeehiveInnovations/pal-mcp-server) - PAL MCP server
 - [Perplexity AI](https://www.perplexity.ai/) - Web search capabilities
 - [arXiv](https://arxiv.org/) - Academic paper repository
 - [Context7](https://context7.com/) - Library documentation search

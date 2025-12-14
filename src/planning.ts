@@ -1,4 +1,3 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { selectBestPlan } from './judge.js';
 import { callLLMsParallel, getVotingConfigs, LLMResponse } from './clients/llm.js';
 
@@ -19,10 +18,10 @@ interface PlanningProposal {
 
 /**
  * Generate a research action plan using TRUE parallel LLM voting
- * Uses direct API calls to bypass PAL MCP stdio serialization bottleneck
+ * Uses direct API calls for parallel voting
  */
 export async function generateConsensusPlan(
-  palClient: Client,
+  geminiKey: string,
   query: string,
   enrichedContext?: string,
   options?: {
@@ -30,17 +29,18 @@ export async function generateConsensusPlan(
     papersRead?: string[];
     techStack?: string[];
     subQuestions?: string[];
-  }
+  },
+  env?: Record<string, string>
 ): Promise<ResearchActionPlan> {
   const planningPrompt = buildPlanningPrompt(query, enrichedContext, options);
-  const configs = getVotingConfigs();
+  const configs = getVotingConfigs(geminiKey);
 
   if (configs.length === 0) {
     console.error('[Planning] No API keys configured, using fallback plan');
     return createFallbackPlan(options);
   }
 
-  // TRUE parallel LLM calls via direct API (not through PAL MCP stdio)
+  // TRUE parallel LLM calls via direct API
   const responses = await callLLMsParallel(planningPrompt, configs);
 
   // Parse responses into proposals
@@ -57,8 +57,8 @@ export async function generateConsensusPlan(
 
   console.error(`[Planning] Received ${validProposals.length} valid proposals`);
 
-  // Select best plan via LLM judge (still uses PAL - single sequential call is fine)
-  const selectedPlan = await selectBestPlan(palClient, validProposals, query, enrichedContext);
+  // Select best plan via LLM judge
+  const selectedPlan = await selectBestPlan(geminiKey, validProposals, query, enrichedContext);
 
   console.error(`[Planning] Selected plan from ${selectedPlan.model} (confidence: ${selectedPlan.confidence})`);
 
@@ -111,7 +111,7 @@ ${options?.subQuestions ? `Sub-questions:\n${options.subQuestions.map((q, i) => 
 
 Available tools:
 - perplexity: Web search for recent information and sources
-- pal_deep_thinking: AI reasoning and analysis
+- deep_analysis: AI reasoning and analysis
 - context7: Library/framework documentation with code examples
 - arxiv: Academic papers (with summaries)
 - consensus: Multi-model validation (for critical findings)
@@ -130,7 +130,7 @@ Return a JSON action plan with this structure:
       "parallel": false
     },
     {
-      "tool": "pal_deep_thinking",
+      "tool": "deep_analysis",
       "description": "Analyze findings",
       "parallel": false
     },
@@ -295,7 +295,7 @@ function extractSteps(parsed: any, rawResponse: string): string[] {
       if (s.tool) {
         const tool = s.tool.toLowerCase();
         if (tool.includes('perplexity')) return 'perplexity_search';
-        if (tool.includes('deep') || tool.includes('pal') || tool.includes('thinking')) return 'deep_analysis';
+        if (tool.includes('deep') || tool.includes('thinking')) return 'deep_analysis';
         if (tool.includes('arxiv') || tool.includes('paper')) return 'arxiv_search';
         if (tool.includes('context') || tool.includes('library') || tool.includes('doc')) return 'library_docs';
         if (tool.includes('consensus')) return 'consensus';
@@ -310,7 +310,7 @@ function extractSteps(parsed: any, rawResponse: string): string[] {
   if (steps.length === 0) {
     const toolMentions = rawResponse.toLowerCase();
     if (toolMentions.includes('perplexity')) steps.push('perplexity_search');
-    if (toolMentions.includes('deep') || toolMentions.includes('pal_deep') || toolMentions.includes('thinking')) steps.push('deep_analysis');
+    if (toolMentions.includes('deep') || toolMentions.includes('thinking')) steps.push('deep_analysis');
     if (toolMentions.includes('arxiv') || toolMentions.includes('paper')) steps.push('arxiv_search');
     if (toolMentions.includes('context7') || toolMentions.includes('library')) steps.push('library_docs');
     if (toolMentions.includes('consensus')) steps.push('consensus');
@@ -340,12 +340,12 @@ function calculateConfidence(plan: ResearchActionPlan): number {
 
 /**
  * Parse content from LLM response that might be wrapped in JSON
- * Cleans PAL's "AGENT'S TURN" footer, raw JSON artifacts, and challenge-specific wrappers
+ * Cleans common response artifacts and wrapper patterns
  */
 export function extractContent(response: string): string {
   let content = response;
   
-  // Try to extract from JSON wrapper (PAL often wraps responses)
+  // Try to extract from JSON wrapper (common LLM response pattern)
   try {
     const parsed = JSON.parse(response);
     if (parsed.content && typeof parsed.content === 'string') {
@@ -355,11 +355,11 @@ export function extractContent(response: string): string {
     // Not JSON, continue with raw response
   }
   
-  // Remove PAL's "AGENT'S TURN" footer
+  // Remove common "AGENT'S TURN" footer pattern
   content = content.replace(/---\s*\n*AGENT'S TURN:[\s\S]*$/i, '').trim();
   
   // Remove raw JSON blocks that shouldn't be in final output
-  // These patterns match common PAL/challenge JSON wrappers
+  // These patterns match common JSON wrappers
   const jsonPatterns = [
     /\{"status":\s*"[^"]*"[\s\S]*?\}/g,                    // status wrapper
     /\{"challenge_accepted"[\s\S]*?\}/g,                   // challenge wrapper
@@ -403,136 +403,3 @@ export interface SufficiencyResult {
   suggestions: string[]; // Aggregated suggestions from all voters
   details: SufficiencyVote[];
 }
-
-/**
- * Run sufficiency vote with TRUE parallel LLM calls to validate response quality
- * Uses direct API calls to bypass PAL MCP stdio serialization bottleneck
- */
-export async function runSufficiencyVote(
-  palClient: Client,
-  query: string,
-  markdown: string,
-  actionPlan?: ResearchActionPlan
-): Promise<SufficiencyResult> {
-  console.error('[Sufficiency] Running quality vote with TRUE parallel LLM calls...');
-
-  const votePrompt = buildSufficiencyPrompt(query, markdown, actionPlan);
-  const configs = getVotingConfigs();
-
-  if (configs.length === 0) {
-    console.error('[Sufficiency] No API keys configured, assuming sufficient');
-    return { sufficient: true, votesFor: 0, votesAgainst: 0, suggestions: [], details: [] };
-  }
-
-  // TRUE parallel LLM calls via direct API (not through PAL MCP stdio)
-  const responses = await callLLMsParallel(votePrompt, configs);
-
-  // Parse responses into votes
-  const validVotes: SufficiencyVote[] = responses
-    .filter((r): r is LLMResponse => !r.error && r.content.length > 0)
-    .map((r) => parseSufficiencyVote(r.content, r.model));
-
-  if (validVotes.length === 0) {
-    console.error('[Sufficiency] All votes failed, assuming sufficient');
-    return { sufficient: true, votesFor: 0, votesAgainst: 0, suggestions: [], details: [] };
-  }
-
-  // Aggregate results
-  const votesFor = validVotes.filter((v) => v.sufficient).length;
-  const votesAgainst = validVotes.filter((v) => !v.sufficient).length;
-  const sufficient = votesFor > votesAgainst; // Majority wins
-
-  // Aggregate suggestions from insufficient votes
-  const allSuggestions = validVotes
-    .filter((v) => !v.sufficient && v.suggestions)
-    .flatMap((v) => v.suggestions || []);
-  const uniqueSuggestions = Array.from(new Set(allSuggestions));
-
-  console.error(`[Sufficiency] Vote result: ${votesFor} sufficient, ${votesAgainst} insufficient`);
-  if (!sufficient) {
-    console.error(`[Sufficiency] Suggestions: ${uniqueSuggestions.join(', ')}`);
-  }
-
-  return {
-    sufficient,
-    votesFor,
-    votesAgainst,
-    suggestions: uniqueSuggestions,
-    details: validVotes,
-  };
-}
-
-/**
- * Build sufficiency vote prompt
- */
-function buildSufficiencyPrompt(
-  query: string,
-  markdown: string,
-  actionPlan?: ResearchActionPlan
-): string {
-  return `
-You are a research quality validator. Evaluate if this research response sufficiently answers the user's query.
-
-User Query: ${query}
-
-${actionPlan ? `Action Plan Executed:\n${actionPlan.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : ''}
-
-Research Response:
-${markdown.slice(0, 2000)}...
-
-Evaluate:
-1. Does the response fully answer the query?
-2. Are there obvious gaps or missing information?
-3. Is the depth appropriate for the complexity?
-
-Return JSON:
-{
-  "sufficient": true/false,
-  "reasoning": "Why sufficient or not",
-  "suggestions": ["search_more_papers", "add_code_examples", "increase_complexity", "search_more_web"]
-}
-
-Possible suggestions:
-- "search_more_papers": Need more academic research
-- "add_code_examples": Need implementation examples
-- "increase_complexity": Current depth too shallow
-- "search_more_web": Need more recent sources
-- "add_library_docs": Need framework/library documentation
-
-Only return the JSON, no explanation.
-`.trim();
-}
-
-/**
- * Parse sufficiency vote from LLM response
- */
-function parseSufficiencyVote(response: string, model: string): SufficiencyVote {
-  try {
-    // Extract JSON from response
-    let content = extractContent(response);
-
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('No JSON found');
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-
-    return {
-      model,
-      sufficient: parsed.sufficient !== false, // Default to true if unclear
-      reasoning: parsed.reasoning || 'No reasoning provided',
-      suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
-    };
-  } catch (error) {
-    console.error(`[Sufficiency] Failed to parse vote from ${model}:`, error);
-    // Fallback: assume sufficient if parsing fails
-    return {
-      model,
-      sufficient: true,
-      reasoning: 'Failed to parse, assuming sufficient',
-      suggestions: [],
-    };
-  }
-}
-

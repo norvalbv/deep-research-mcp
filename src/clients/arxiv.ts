@@ -16,10 +16,8 @@ export interface ArxivClient {
 export async function createArxivClient(storagePath?: string): Promise<ArxivClient> {
   console.error('[arXiv Client] Spawning arXiv MCP subprocess...');
 
-  const resolvedStorage =
-    storagePath ||
-    process.env.ARXIV_STORAGE_PATH ||
-    join(homedir(), '.agent-chat', 'papers');
+  // Default to home directory if not provided
+  const path = storagePath || join(homedir(), '.arxiv-mcp');
 
   const transport = new StdioClientTransport({
     command: 'uv',
@@ -28,7 +26,7 @@ export async function createArxivClient(storagePath?: string): Promise<ArxivClie
       'run',
       'arxiv-mcp-server',
       '--storage-path',
-      resolvedStorage,
+      path,
     ],
   });
 

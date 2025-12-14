@@ -2,8 +2,7 @@
  * Synthesis Phase - Combines all gathered data into a unified, context-aware answer
  */
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { palChat } from './clients/pal.js';
+import { callLLM } from './clients/llm.js';
 import { ExecutionResult } from './execution.js';
 import { extractContent } from './planning.js';
 
@@ -20,13 +19,13 @@ export interface SynthesisOptions {
  * Synthesize all gathered research data into a unified, context-aware answer
  */
 export async function synthesizeFindings(
-  palClient: Client | null,
+  geminiKey: string | undefined,
   query: string,
   enrichedContext: string | undefined,
   execution: ExecutionResult,
   options?: SynthesisOptions
 ): Promise<string> {
-  if (!palClient) {
+  if (!geminiKey) {
     return buildFallbackSynthesis(execution);
   }
 
@@ -35,8 +34,12 @@ export async function synthesizeFindings(
   const prompt = buildSynthesisPrompt(query, enrichedContext, execution, options);
 
   try {
-    const response = await palChat(palClient, prompt, 'gemini-2.5-flash');
-    return extractContent(response);
+    const response = await callLLM(prompt, {
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',
+      apiKey: geminiKey
+    });
+    return extractContent(response.content);
   } catch (error) {
     console.error('[Synthesis] Error:', error);
     return buildFallbackSynthesis(execution);
@@ -174,7 +177,7 @@ Synthesize ALL the above research into a **unified, cohesive answer** that:
 }
 
 /**
- * Fallback synthesis when PAL is unavailable
+ * Fallback synthesis when Gemini API key is unavailable
  */
 function buildFallbackSynthesis(execution: ExecutionResult): string {
   const parts: string[] = [];
@@ -191,7 +194,7 @@ function buildFallbackSynthesis(execution: ExecutionResult): string {
     parts.push(`**Library Documentation:** Available`);
   }
 
-  return parts.join('\n\n') || 'No synthesis available - PAL client unavailable.';
+  return parts.join('\n\n') || 'No synthesis available - GEMINI_API_KEY not provided.';
 }
 
 

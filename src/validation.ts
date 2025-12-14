@@ -4,8 +4,7 @@
  * Flow: Synthesis → Critical Challenge (attacks synthesis vs input) → Sufficiency Vote (synthesis vs critique)
  */
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { palChat } from './clients/pal.js';
+import { callLLM } from './clients/llm.js';
 import { ExecutionResult } from './execution.js';
 import { ResearchActionPlan, extractContent } from './planning.js';
 
@@ -28,7 +27,7 @@ export interface SufficiencyVote {
  * Returns specific critique points identifying gaps/mismatches
  */
 export async function runChallenge(
-  palClient: Client | null,
+  geminiKey: string | undefined,
   query: string,
   synthesis: string,
   context?: {
@@ -37,14 +36,18 @@ export async function runChallenge(
     subQuestions?: string[];
   }
 ): Promise<ChallengeResult | undefined> {
-  if (!palClient) return undefined;
+  if (!geminiKey) return undefined;
 
   console.error('[Challenge] Attacking synthesis against original input...');
 
   const prompt = buildChallengePrompt(query, synthesis, context);
-  const response = await palChat(palClient, prompt, 'gemini-2.5-flash');
+  const response = await callLLM(prompt, {
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    apiKey: geminiKey
+  });
   
-  return parseChallengeResponse(response);
+  return parseChallengeResponse(response.content);
 }
 
 /**
@@ -153,11 +156,11 @@ function parseChallengeResponse(response: string): ChallengeResult {
  * NOTE: This is now secondary to the challenge/vote flow
  */
 export async function runConsensusValidation(
-  palClient: Client | null,
+  geminiKey: string | undefined,
   query: string,
   executionResult: ExecutionResult
 ): Promise<string | undefined> {
-  if (!palClient) return undefined;
+  if (!geminiKey) return undefined;
 
   console.error('[Validation] Running consensus validation...');
   
@@ -194,8 +197,12 @@ Assess the validity, completeness, and reliability of these findings. Consider:
 
 Return a plain text assessment (3-4 paragraphs max).`;
 
-  const response = await palChat(palClient, prompt, 'gemini-2.5-flash');
-  return extractContent(response);
+  const response = await callLLM(prompt, {
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    apiKey: geminiKey
+  });
+  return extractContent(response.content);
 }
 
 /**
@@ -203,12 +210,12 @@ Return a plain text assessment (3-4 paragraphs max).`;
  * Votes on whether synthesis wins or critique wins
  */
 export async function runSufficiencyVote(
-  palClient: Client | null,
+  geminiKey: string | undefined,
   query: string,
   synthesis: string,
   challenge: ChallengeResult | undefined
 ): Promise<SufficiencyVote | undefined> {
-  if (!palClient) return undefined;
+  if (!geminiKey) return undefined;
 
   // If no challenge or no gaps found, synthesis wins by default
   if (!challenge || !challenge.hasSignificantGaps) {
@@ -228,7 +235,7 @@ export async function runSufficiencyVote(
   
   // Use direct LLM calls for parallel voting
   const { callLLMsParallel, getVotingConfigs } = await import('./clients/llm.js');
-  const configs = getVotingConfigs();
+  const configs = getVotingConfigs(geminiKey);
   
   if (configs.length === 0) {
     console.error('[Vote] No API keys configured, assuming synthesis wins');

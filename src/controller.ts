@@ -4,7 +4,6 @@
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { createPalClient } from './clients/pal.js';
 import { searchLibraryDocs } from './clients/context7.js';
 import { createArxivClient, ArxivClient } from './clients/arxiv.js';
 import { arxivSearch } from './services/arxiv.js';
@@ -27,23 +26,18 @@ export interface ResearchOptions {
 interface Context7Wrapper { client: Client; close: () => Promise<void>; }
 
 export class ResearchController {
-  private palClient: Client | null = null;
   private context7Client: Context7Wrapper | null = null;
   private arxivClient: ArxivClient | null = null;
   private isInitialized = false;
+  private env: Record<string, string> = {};
+
+  constructor(env?: Record<string, string>) {
+    this.env = env || {};
+  }
 
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
     console.error('[Research] Initializing...');
-
-    try {
-      const pal = await createPalClient();
-      this.palClient = pal.client;
-      console.error('[Research] PAL connected');
-    } catch (error: any) {
-      console.error('[Research] PAL unavailable:', error.message);
-    }
-
     this.isInitialized = true;
   }
 
@@ -58,14 +52,14 @@ export class ResearchController {
     // Step 2: Dynamic Execution (gather data)
     const execution = await executeResearchPlan({
       query, enrichedContext, depth: complexity, actionPlan,
-      palClient: this.palClient,
       context7Client: this.context7Client?.client || null,
       options,
+      env: this.env,
     });
 
     // Step 3: Synthesize findings into unified answer
     let synthesis = await synthesizeFindings(
-      this.palClient,
+      this.env.GEMINI_API_KEY,
       query,
       enrichedContext,
       execution,
@@ -82,9 +76,9 @@ export class ResearchController {
     
     // Only run consensus for depth >= 4
     const [challenge, consensus] = await Promise.all([
-      runChallenge(this.palClient, query, synthesis, challengeContext),
+      runChallenge(this.env.GEMINI_API_KEY, query, synthesis, challengeContext),
       complexity >= 4 
-        ? runConsensusValidation(this.palClient, query, execution) 
+        ? runConsensusValidation(this.env.GEMINI_API_KEY, query, execution) 
         : Promise.resolve(undefined),
     ]);
 
@@ -95,7 +89,7 @@ export class ResearchController {
     
     if (challenge?.hasSignificantGaps) {
       console.error('[Research] Running sufficiency vote (synthesis vs critique)...');
-      sufficiency = await runSufficiencyVote(this.palClient, query, synthesis, challenge);
+      sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, synthesis, challenge);
 
       // Step 6: Re-synthesis if critique wins (max 1 iteration)
       if (sufficiency && !sufficiency.sufficient && sufficiency.criticalGaps.length > 0) {
@@ -111,10 +105,10 @@ export class ResearchController {
         );
         
         // Final challenge (no more iterations)
-        const finalChallenge = await runChallenge(this.palClient, query, synthesis, challengeContext);
+        const finalChallenge = await runChallenge(this.env.GEMINI_API_KEY, query, synthesis, challengeContext);
         
         if (finalChallenge?.hasSignificantGaps) {
-          sufficiency = await runSufficiencyVote(this.palClient, query, synthesis, finalChallenge);
+          sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, synthesis, finalChallenge);
         } else {
           // No gaps after re-synthesis, synthesis wins
           sufficiency = {
@@ -159,7 +153,7 @@ export class ResearchController {
     const gapContext = `\n\nCRITICAL GAPS TO ADDRESS:\n${gaps.map((g, i) => `${i + 1}. ${g}`).join('\n')}\n\nYou MUST address these gaps in your synthesis.`;
     
     return synthesizeFindings(
-      this.palClient,
+      this.env.GEMINI_API_KEY,
       query,
       (enrichedContext || '') + gapContext,
       execution,
@@ -192,11 +186,11 @@ export class ResearchController {
   }
 
   private async getActionPlan(query: string, ctx?: string, depth?: ComplexityLevel, opts?: ResearchOptions): Promise<ResearchActionPlan> {
-    if (this.palClient) {
-      return generateConsensusPlan(this.palClient, query, ctx, {
+    if (this.env.GEMINI_API_KEY) {
+      return generateConsensusPlan(this.env.GEMINI_API_KEY, query, ctx, {
         constraints: opts?.constraints, papersRead: opts?.papersRead,
         techStack: opts?.techStack, subQuestions: opts?.subQuestions,
-      });
+      }, this.env);
     }
     // Fallback
     return createFallbackPlan({
@@ -206,12 +200,13 @@ export class ResearchController {
   }
 
   async getArxivClient(): Promise<ArxivClient> {
-    if (!this.arxivClient) this.arxivClient = await createArxivClient();
+    if (!this.arxivClient) {
+      this.arxivClient = await createArxivClient(this.env.ARXIV_STORAGE_PATH);
+    }
     return this.arxivClient;
   }
 
   async cleanup(): Promise<void> {
-    if (this.palClient) await this.palClient.close();
     if (this.context7Client) await this.context7Client.close();
     if (this.arxivClient) await this.arxivClient.close();
     this.isInitialized = false;

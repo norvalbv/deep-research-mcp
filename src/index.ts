@@ -24,9 +24,17 @@ const server = new McpServer({
   version: '1.0.0',
 });
 
-// Initialize research controller
-const controller = new ResearchController();
+// Initialize research controller (will be initialized on first use with env from MCP)
+let controller: ResearchController | null = null;
 const arxivClientPromise = createArxivClient();
+
+function getController(): ResearchController {
+  if (!controller) {
+    // Note: process.env is populated by MCP server at runtime from mcp.json
+    controller = new ResearchController(process.env as Record<string, string>);
+  }
+  return controller;
+}
 
 // ==================== ASYNC JOB STORAGE ====================
 // In-memory storage for async research jobs
@@ -361,16 +369,15 @@ Returns validated markdown report with:
         ``,
         `## Debug Info`,
         ``,
-        `**Environment Variables:**`,
-        `- PERPLEXITY_API_KEY: ${process.env.PERPLEXITY_API_KEY ? '✓ SET' : '✗ MISSING'}`,
-        `- GEMINI_API_KEY: ${process.env.GEMINI_API_KEY ? '✓ SET' : '✗ MISSING'}`,
-        `- OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '✓ SET' : '✗ MISSING'}`,
-        `- UVX_PATH: ${process.env.UVX_PATH || 'not set (auto-detect)'}`,
+        `**Environment Variables (from mcp.json):**`,
+        `- PERPLEXITY_API_KEY: Check your mcp.json env configuration`,
+        `- GEMINI_API_KEY: Check your mcp.json env configuration`,
+        `- OPENAI_API_KEY: Check your mcp.json env configuration`,
+        `- CONTEXT7_API_KEY: Check your mcp.json env configuration`,
         ``,
-        `**If PAL connection fails:**`,
-        `1. Install uv: \`pip install uv\``,
-        `2. Or set UVX_PATH in your mcp.json env to the full path of uvx`,
-        `3. Find uvx path: \`which uvx\``,
+        `**If connection issues occur:**`,
+        `1. Verify all API keys are set in your mcp.json env configuration`,
+        `2. Check network connectivity`,
         ``,
         `**Stack trace:**`,
         '```',
@@ -775,7 +782,8 @@ server.registerTool(
         job.progress = 'Executing research...';
         await saveJob(job); // Persist status change
         
-        await controller.initialize();
+        const ctrl = getController();
+        await ctrl.initialize();
         
         const enrichedContext = buildEnrichedContext({
           project_description,
@@ -795,7 +803,7 @@ server.registerTool(
           target_metrics,
         });
 
-        const result = await controller.execute({
+        const result = await ctrl.execute({
           query,
           enrichedContext,
           depthLevel: depth_level as ComplexityLevel,
@@ -991,15 +999,6 @@ Poll this endpoint every ~30 seconds until status is "completed" or "failed".`,
 async function main() {
   console.error('[Research MCP] Starting server...');
   
-  // Check environment variables
-  const requiredEnvVars = ['PERPLEXITY_API_KEY', 'GEMINI_API_KEY', 'OPENAI_API_KEY'];
-  const missingVars = requiredEnvVars.filter(v => !process.env[v]);
-  
-  if (missingVars.length > 0) {
-    console.error('[Research MCP] WARNING: Missing environment variables:', missingVars.join(', '));
-    console.error('[Research MCP] Some features may not work correctly.');
-  }
-
   const transport = new StdioServerTransport();
   await server.connect(transport);
   
@@ -1010,13 +1009,15 @@ async function main() {
   // Cleanup on exit
   process.on('SIGINT', async () => {
     console.error('\n[Research MCP] Shutting down...');
-    await controller.cleanup();
+    const ctrl = getController();
+    await ctrl.cleanup();
     process.exit(0);
   });
 
   process.on('SIGTERM', async () => {
     console.error('\n[Research MCP] Shutting down...');
-    await controller.cleanup();
+    const ctrl = getController();
+    await ctrl.cleanup();
     process.exit(0);
   });
 }

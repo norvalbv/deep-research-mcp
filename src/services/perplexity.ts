@@ -9,18 +9,18 @@ export interface PerplexityResult {
   model: string;
 }
 
-export async function perplexitySearch(query: string): Promise<PerplexityResult> {
-  const apiKey = process.env.PERPLEXITY_API_KEY;
+export async function perplexitySearch(query: string, apiKey?: string): Promise<PerplexityResult> {
+  const key = apiKey;
   
-  if (!apiKey) {
-    throw new Error('PERPLEXITY_API_KEY environment variable is required');
+  if (!key) {
+    throw new Error('PERPLEXITY_API_KEY is required');
   }
 
   try {
     const response = await fetch('https://api.perplexity.ai/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${key}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

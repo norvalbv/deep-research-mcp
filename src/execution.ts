@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { perplexitySearch } from './services/perplexity.js';
 import { arxivSearch, ArxivPaper, ArxivResult } from './services/arxiv.js';
-import { palChat } from './clients/pal.js';
+import { callLLM } from './clients/llm.js';
 import { searchLibraryDocs } from './clients/context7.js';
 import { ComplexityLevel } from './types/index.js';
 import { ResearchActionPlan, extractContent } from './planning.js';
@@ -11,7 +11,6 @@ export interface ExecutionContext {
   enrichedContext?: string;
   depth: ComplexityLevel;
   actionPlan: ResearchActionPlan;
-  palClient: Client | null;
   context7Client: Client | null;
   options?: {
     subQuestions?: string[];
@@ -21,6 +20,7 @@ export interface ExecutionContext {
     papersRead?: string[];
     outputFormat?: 'summary' | 'detailed' | 'actionable_steps';
   };
+  env?: Record<string, string>;
 }
 
 export interface ExecutionResult {
@@ -33,11 +33,11 @@ export interface ExecutionResult {
 
 export async function executeResearchPlan(ctx: ExecutionContext): Promise<ExecutionResult> {
   const result: ExecutionResult = {};
-  const { query, enrichedContext, actionPlan, palClient, context7Client, options } = ctx;
+  const { query, enrichedContext, actionPlan, context7Client, options, env } = ctx;
 
   // Determine which tools to run based on plan and depth level
   const shouldRunPerplexity = actionPlan.steps.some(s => s.includes('perplexity') || s.includes('web'));
-  const shouldRunDeepThinking = actionPlan.steps.some(s => s.includes('deep') || s.includes('pal') || s.includes('thinking'));
+  const shouldRunDeepThinking = actionPlan.steps.some(s => s.includes('deep') || s.includes('thinking'));
   const shouldRunArxiv = (ctx.depth >= 3 || actionPlan.steps.some(s => s.includes('arxiv') || s.includes('papers'))) && !actionPlan.toolsToSkip?.includes('arxiv_search');
   const shouldRunContext7 = actionPlan.steps.some(s => s.includes('context7') || s.includes('library') || s.includes('docs'));
 
@@ -48,7 +48,7 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
   if (shouldRunPerplexity) {
     gatheringTasks.push((async () => {
       console.error('[Exec] → Perplexity search...');
-      result.perplexityResult = await perplexitySearch(withContext(query, enrichedContext));
+      result.perplexityResult = await perplexitySearch(withContext(query, enrichedContext), env?.PERPLEXITY_API_KEY);
     })());
   }
 
@@ -58,8 +58,8 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
       const arxivResult = await arxivSearch(query, 5);
       result.arxivPapers = arxivResult;
       // Summarize papers in parallel (don't wait for other tasks)
-      if (arxivResult.papers.length > 0 && palClient) {
-        result.arxivPapers = { ...arxivResult, papers: await summarizePapers(palClient, arxivResult.papers) };
+      if (arxivResult.papers.length > 0 && env?.GEMINI_API_KEY) {
+        result.arxivPapers = { ...arxivResult, papers: await summarizePapers(arxivResult.papers, env.GEMINI_API_KEY) };
       }
     })());
   }
@@ -79,7 +79,7 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
       result.subQuestionResults = await Promise.all(
         options.subQuestions!.map(async (sq) => {
           const sub: any = { question: sq };
-          sub.perplexityResult = await perplexitySearch(withContext(sq, enrichedContext));
+          sub.perplexityResult = await perplexitySearch(withContext(sq, enrichedContext), env?.PERPLEXITY_API_KEY);
           return sub;
         })
       );
@@ -90,25 +90,36 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
   await Promise.all(gatheringTasks);
 
   // PHASE 2: Deep analysis (needs perplexity results for best quality)
-  if (shouldRunDeepThinking && palClient) {
+  if (shouldRunDeepThinking && env?.GEMINI_API_KEY) {
     console.error('[Exec] Phase 2: Deep analysis...');
-    result.deepThinking = await palChat(
-      palClient,
+    const response = await callLLM(
       buildDeepAnalysisPrompt(query, enrichedContext, result.perplexityResult?.content),
-      'gemini-2.5-flash'
+      {
+        provider: 'gemini',
+        model: 'gemini-2.5-flash',
+        apiKey: env.GEMINI_API_KEY
+      }
     );
+    result.deepThinking = response.content;
   }
 
   return result;
 }
 
-async function summarizePapers(palClient: Client, papers: ArxivPaper[]): Promise<ArxivPaper[]> {
+async function summarizePapers(papers: ArxivPaper[], geminiKey: string): Promise<ArxivPaper[]> {
   return Promise.all(papers.map(async (p) => {
     try {
       // Use fast model for simple summarization to avoid timeouts
-      const rawSummary = await palChat(palClient, `Summarize in <300 chars: ${p.title}\n${p.summary}`, 'gemini-2.5-flash');
+      const response = await callLLM(
+        `Summarize in <300 chars: ${p.title}\n${p.summary}`,
+        {
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+          apiKey: geminiKey
+        }
+      );
       // Extract content from JSON wrapper if present
-      const summary = extractContent(rawSummary);
+      const summary = extractContent(response.content);
       return { ...p, summary: summary.length > 300 ? summary.slice(0, 297) + '...' : summary };
     } catch { return { ...p, summary: p.summary.slice(0, 297) + '...' }; }
   }));

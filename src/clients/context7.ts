@@ -14,8 +14,14 @@ export interface Context7Client {
 /**
  * Create and connect to Context7 MCP server subprocess
  */
-export async function createContext7Client(): Promise<Context7Client> {
+export async function createContext7Client(apiKey?: string): Promise<Context7Client> {
   console.error('[Context7 Client] Spawning Context7 MCP subprocess...');
+
+  const key = apiKey || '';
+  
+  if (!key) {
+    throw new Error('CONTEXT7_API_KEY is required');
+  }
 
   const transport = new StdioClientTransport({
     command: 'npx',
@@ -25,7 +31,7 @@ export async function createContext7Client(): Promise<Context7Client> {
       'run',
       '@upstash/context7-mcp',
       '--key',
-      'e3c9b4d4-fafe-464d-a1bf-8f520bfd5817',
+      key,
     ],
   });
 
