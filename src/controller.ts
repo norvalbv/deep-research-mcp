@@ -146,9 +146,9 @@ export class ResearchController {
       };
     }
 
-    // Build sections from structured synthesis output
+    // Build sections from structured synthesis output + validation data
     console.error('[Research] Building sections from structured output...');
-    const sections = this.buildSectionsFromSynthesis(synthesisOutput);
+    const sections = this.buildSectionsFromResult(synthesisOutput, { challenge, consensus, sufficiency, improved });
     
     // Generate summaries for each section
     await generateSectionSummaries(sections, this.env.GEMINI_API_KEY);
@@ -206,9 +206,17 @@ export class ResearchController {
   }
 
   /**
-   * Build Section objects from structured synthesis output
+   * Build Section objects from structured synthesis output + validation data
    */
-  private buildSectionsFromSynthesis(output: SynthesisOutput): Record<string, Section> {
+  private buildSectionsFromResult(
+    output: SynthesisOutput,
+    validation: {
+      challenge?: ChallengeResult;
+      consensus?: string;
+      sufficiency?: SufficiencyVote;
+      improved?: boolean;
+    }
+  ): Record<string, Section> {
     const sections: Record<string, Section> = {};
     
     // Overview section
@@ -234,6 +242,67 @@ export class ResearchController {
       sections.additional_insights = {
         title: 'Additional Insights',
         content: output.additionalInsights,
+        summary: '',
+      };
+    }
+    
+    // Validation section - combines challenge + sufficiency
+    if (validation.challenge || validation.sufficiency) {
+      const validationParts: string[] = [];
+      
+      // Critical Challenge
+      if (validation.challenge) {
+        validationParts.push('### Critical Challenge\n');
+        if (validation.challenge.hasSignificantGaps && validation.challenge.critiques.length > 0) {
+          validation.challenge.critiques.forEach((critique, i) => {
+            validationParts.push(`${i + 1}. ${critique}`);
+          });
+        } else {
+          validationParts.push('No significant gaps found in the synthesis.');
+        }
+        validationParts.push('');
+      }
+      
+      // Quality Vote
+      if (validation.sufficiency) {
+        validationParts.push('### Quality Vote\n');
+        validationParts.push(`**Result**: ${validation.sufficiency.votesFor} synthesis_wins, ${validation.sufficiency.votesAgainst} critique_wins`);
+        
+        if (validation.improved) {
+          validationParts.push('**Status**: ⚠️ Synthesis improved after critique identified gaps\n');
+        } else if (validation.sufficiency.sufficient) {
+          validationParts.push('**Status**: ✅ Synthesis validated (addresses the query adequately)\n');
+        } else {
+          validationParts.push('**Status**: ⚠️ Critique identified gaps (see below)\n');
+        }
+        
+        if (validation.sufficiency.criticalGaps && validation.sufficiency.criticalGaps.length > 0) {
+          validationParts.push('**Critical Gaps Identified**:');
+          validation.sufficiency.criticalGaps.forEach((gap) => {
+            validationParts.push(`- ${gap}`);
+          });
+          validationParts.push('');
+        }
+        
+        validationParts.push('**Model Reasoning**:');
+        validation.sufficiency.details.forEach((vote) => {
+          const status = vote.vote === 'synthesis_wins' ? '✅' : '❌';
+          validationParts.push(`- ${status} **${vote.model}**: ${vote.reasoning}`);
+        });
+      }
+      
+      sections.validation = {
+        title: 'Validation',
+        content: validationParts.join('\n'),
+        summary: '',
+      };
+    }
+    
+    // Consensus section (if present)
+    if (validation.consensus) {
+      sections.consensus = {
+        title: 'Multi-Model Consensus',
+        content: validation.consensus,
         summary: '',
       };
     }
