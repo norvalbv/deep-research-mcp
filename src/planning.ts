@@ -1,5 +1,6 @@
 import { selectBestPlan } from './judge.js';
-import { callLLMsParallel, getVotingConfigs, LLMResponse } from './clients/llm.js';
+import { callLLMsParallel, getVotingConfigs, LLMResponse, callLLM } from './clients/llm.js';
+import { RootPlan } from './types/index.js';
 
 export interface ResearchActionPlan {
   complexity: number; // 1-5
@@ -8,6 +9,7 @@ export interface ResearchActionPlan {
   modelVotes: Array<{ model: string; complexity: number }>;
   toolsToUse: string[];
   toolsToSkip: string[];
+  _rawPlan?: any;  // Stores new RootPlan structure if present
 }
 
 interface PlanningProposal {
@@ -68,6 +70,104 @@ export async function generateConsensusPlan(
   };
 }
 
+/**
+ * Plan a single sub-question (lightweight, fast)
+ * Uses single LLM call for speed
+ */
+export async function planSubQuestion(
+  geminiKey: string,
+  subQuestion: string,
+  mainContext?: string,
+  techStack?: string[]
+): Promise<{ tools: string[]; params?: any }> {
+  if (!geminiKey) {
+    // Fallback: just use Perplexity
+    return { tools: ['perplexity'] };
+  }
+
+  const prompt = buildSubQuestionPlanningPrompt(subQuestion, mainContext, techStack);
+
+  try {
+    const response = await callLLM(prompt, {
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',  // Fast model for sub-Q planning
+      apiKey: geminiKey,
+      timeout: 15000  // Quick 15s timeout
+    });
+
+    // Parse the sub-Q plan
+    const plan = parseSubQuestionPlan(response.content);
+    return plan;
+  } catch (error) {
+    console.error('[SubQ Planning] Error:', error);
+    // Fallback based on tech stack
+    if (techStack?.length) {
+      return { tools: ['context7', 'perplexity'], params: { library: techStack[0] } };
+    }
+    return { tools: ['perplexity'] };
+  }
+}
+
+function buildSubQuestionPlanningPrompt(
+  subQuestion: string,
+  mainContext?: string,
+  techStack?: string[]
+): string {
+  return `
+You are planning research for a sub-question. Choose the RIGHT tools quickly.
+
+Sub-Question: ${subQuestion}
+
+${mainContext ? `Main Research Context:\n${mainContext}\n` : ''}
+${techStack?.length ? `Available Tech Stack: ${techStack.join(', ')}\n` : ''}
+
+Available tools:
+- perplexity: Web search
+- context7: Library docs (if question is about specific library/framework)
+- arxiv: Academic papers (if theoretical/research-heavy)
+
+Return JSON:
+{
+  "tools": ["perplexity"],
+  "params": {
+    "context7Query": "specific topic",
+    "library": "library-name"
+  }
+}
+
+Rules:
+1. Use context7 ONLY if question is specifically about a library in tech_stack
+2. Use arxiv ONLY if question needs academic/theoretical research
+3. Always include perplexity for web search
+4. Keep it simple - most sub-Qs just need perplexity
+
+Return ONLY JSON, no explanation.
+`.trim();
+}
+
+function parseSubQuestionPlan(response: string): { tools: string[]; params?: any } {
+  try {
+    // Clean and parse JSON
+    let jsonStr = response.trim()
+      .replace(/^```(?:json)?\s*/gm, '')
+      .replace(/```\s*$/gm, '');
+    
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        tools: Array.isArray(parsed.tools) ? parsed.tools : ['perplexity'],
+        params: parsed.params || {}
+      };
+    }
+  } catch (error) {
+    console.error('[SubQ Planning] Parse error:', error);
+  }
+  
+  // Fallback
+  return { tools: ['perplexity'] };
+}
+
 export function createFallbackPlan(options?: { techStack?: string[]; subQuestions?: string[] }): ResearchActionPlan {
   const steps = ['perplexity_search', 'deep_analysis'];
   if (options?.techStack?.length) steps.push('library_docs');
@@ -97,6 +197,8 @@ function buildPlanningPrompt(
     subQuestions?: string[];
   }
 ): string {
+  const hasTechStack = options?.techStack?.length;
+  
   return `
 You are a research planning expert. Create a detailed action plan to answer this research query.
 
@@ -106,13 +208,12 @@ ${enrichedContext ? `Context:\n${enrichedContext}\n` : ''}
 
 ${options?.constraints ? `Constraints:\n- ${options.constraints.join('\n- ')}\n` : ''}
 ${options?.papersRead ? `Papers Already Read (avoid):\n- ${options.papersRead.join('\n- ')}\n` : ''}
-${options?.techStack ? `Tech Stack: ${options.techStack.join(', ')}\n` : ''}
-${options?.subQuestions ? `Sub-questions:\n${options.subQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n` : ''}
+${hasTechStack ? `Tech Stack: ${options.techStack!.join(', ')}\n` : ''}
 
 Available tools:
 - perplexity: Web search for recent information and sources
 - deep_analysis: AI reasoning and analysis
-- context7: Library/framework documentation with code examples
+- context7: Library/framework documentation with code examples (specify library + topic)
 - arxiv: Academic papers (with summaries)
 - consensus: Multi-model validation (for critical findings)
 
@@ -120,56 +221,32 @@ Return a JSON action plan with this structure:
 {
   "complexity": 1-5,
   "reasoning": "Why this complexity level",
-  "steps": [
-    {
-      "tool": "perplexity",
-      "description": "What this step achieves",
-      "parameters": {
-        "query": "Specific search query"
-      },
-      "parallel": false
-    },
-    {
-      "tool": "deep_analysis",
-      "description": "Analyze findings",
-      "parallel": false
-    },
-    {
-      "tool": "context7",
-      "description": "Library/framework documentation with code examples",
-      "parameters": {
-        "query": "Specific library/framework documentation"
-      },
-      "parallel": false
-    },
-    {
-      "tool": "arxiv",
-      "description": "Academic papers",
-      "parameters": {
-        "query": "Specific academic paper"
-      },
-      "parallel": false
-    },
-    {
-      "tool": "consensus",
-      "description": "Multi-model validation",
-      "parameters": {
-        "query": "Specific validation query"
-      },
-      "parallel": false
-    }
-  ],
-  "estimated_time_seconds": 30
+  "mainQuery": {
+    "steps": ["perplexity", "deep_analysis"],
+    "actionSteps": [
+      {
+        "tool": "perplexity",
+        "description": "What this achieves",
+        "parameters": {"query": "specific query"}
+      }
+    ]
+  }${hasTechStack ? `,
+  "sharedDocumentation": {
+    "libraries": ${JSON.stringify(options.techStack)},
+    "topics": ["getting started", "api basics"]
+  }` : ''}
 }
 
 Rules:
 1. Complexity 1-2: Use perplexity only or + basic reasoning
-2. Complexity 3: Add context7 (if tech_stack)
-3. Complexity 4: add consensus validation
+2. Complexity 3: Add context7 (if tech_stack provided)
+3. Complexity 4: Add consensus validation
 4. Complexity 5: Add arxiv research papers
-5. Mark steps as parallel: true if they can run simultaneously
-6. Avoid tools for papers_read papers
-7. Keep total time under constraints if specified
+5. Focus ONLY on the main query - sub-questions will be planned separately
+6. sharedDocumentation.topics should be common syntax/basics if tech_stack provided
+7. Avoid tools for papers_read papers
+
+Important: Do NOT plan for sub-questions - they will get their own planning calls.
 
 Return ONLY the JSON, no explanation.
 `.trim();
@@ -237,8 +314,21 @@ function parseActionPlan(response: string): ResearchActionPlan {
     }
   }
 
-  // Convert ActionStep[] to string[] and deduplicate
-  let steps: string[] = extractSteps(parsed, response);
+  // Convert new structure to legacy format for backward compatibility
+  // New structure: {mainQuery: {steps: []}, subQuestions: [], sharedDocumentation: {}}
+  // Legacy structure: {steps: [], ...}
+  
+  let steps: string[] = [];
+  
+  if (parsed.mainQuery && parsed.mainQuery.steps) {
+    // New structure detected
+    steps = Array.isArray(parsed.mainQuery.steps) 
+      ? parsed.mainQuery.steps 
+      : extractSteps(parsed.mainQuery, response);
+  } else if (parsed.steps) {
+    // Legacy structure
+    steps = extractSteps(parsed, response);
+  }
 
   // Default steps based on complexity if none parsed
   if (steps.length === 0) {
@@ -255,6 +345,8 @@ function parseActionPlan(response: string): ResearchActionPlan {
     modelVotes: [],
     toolsToUse: steps,
     toolsToSkip: parsed.toolsToSkip || [],
+    // Store new structure if present (for future use)
+    _rawPlan: parsed.mainQuery || parsed.subQuestions || parsed.sharedDocumentation ? parsed : undefined,
   };
   
   console.error(`[Planning] Parsed plan: complexity=${result.complexity}, steps=${result.steps.join(', ')}`);

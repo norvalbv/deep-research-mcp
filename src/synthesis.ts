@@ -143,29 +143,36 @@ ${enrichedContext}
 `);
 
   if (execution.perplexityResult?.content) {
-    sections.push(`**Web Search Results:**
+    sections.push(`**Web Search Results [perplexity]:**
 ${execution.perplexityResult.content.slice(0, 3000)}
+
+Sources: ${execution.perplexityResult.sources?.join(', ') || 'Not available'}
 `);
   }
 
   if (execution.arxivPapers?.papers?.length) {
     const paperSummaries = execution.arxivPapers.papers
-      .map(p => `- **${p.title}** (${p.id}): ${p.summary}`)
+      .map(p => `- **${p.title}** [arxiv:${p.id}]: ${p.summary}`)
       .join('\n');
-    sections.push(`**Academic Papers Found:**
+    sections.push(`**Academic Papers Found [arxiv]:**
 ${paperSummaries}
 `);
   }
 
   if (execution.libraryDocs) {
-    sections.push(`**Library Documentation:**
+    sections.push(`**Library Documentation [context7]:**
 ${execution.libraryDocs.slice(0, 2000)}
 `);
   }
 
   if (execution.subQuestionResults?.length) {
     const subResults = execution.subQuestionResults
-      .map(sq => `**Q: ${sq.question}**\n${sq.perplexityResult?.content?.slice(0, 500) || 'No results'}`)
+      .map(sq => {
+        const sources = [];
+        if (sq.perplexityResult) sources.push('[perplexity]');
+        if (sq.libraryDocs) sources.push('[context7]');
+        return `**Q: ${sq.question}** ${sources.join(' ')}\n${sq.perplexityResult?.content?.slice(0, 500) || 'No results'}`;
+      })
       .join('\n\n');
     sections.push(`**Sub-Question Research:**
 ${subResults}
@@ -173,7 +180,7 @@ ${subResults}
   }
 
   if (execution.deepThinking) {
-    sections.push(`**Deep Analysis:**
+    sections.push(`**Deep Analysis [deep_analysis]:**
 ${extractContent(execution.deepThinking).slice(0, 2000)}
 `);
   }
@@ -205,7 +212,12 @@ ${subQuestionSections}
 - Use the EXACT section delimiters shown above: <!-- SECTION:name -->
 - Be comprehensive and thorough in each section
 - Include code examples in markdown code blocks where helpful
-- Cite sources when making specific claims
+- **Use inline citations** to indicate source of information:
+  - [perplexity:url] for web search findings
+  - [context7:library-name] for library documentation/code
+  - [arxiv:paper-id] for academic papers
+  - Example: "LangSmith provides dataset management [context7:langsmith] which allows version control [perplexity:langsmith-docs]"
+- Cite sources when making specific claims or showing code examples
 - Don't artificially limit your response length
 `);
 

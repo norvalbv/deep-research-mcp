@@ -3,8 +3,8 @@ import { perplexitySearch } from './services/perplexity.js';
 import { arxivSearch, ArxivPaper, ArxivResult } from './services/arxiv.js';
 import { callLLM } from './clients/llm.js';
 import { searchLibraryDocs } from './clients/context7.js';
-import { ComplexityLevel } from './types/index.js';
-import { ResearchActionPlan, extractContent } from './planning.js';
+import { ComplexityLevel, DocumentationCache, RootPlan, SubQuestionPlan } from './types/index.js';
+import { ResearchActionPlan, extractContent, planSubQuestion } from './planning.js';
 
 export interface ExecutionContext {
   query: string;
@@ -28,18 +28,38 @@ export interface ExecutionResult {
   deepThinking?: string;
   libraryDocs?: string;
   arxivPapers?: ArxivResult;
-  subQuestionResults?: Array<{ question: string; perplexityResult?: { content: string }; deepThinking?: string }>;
+  subQuestionResults?: Array<{ question: string; perplexityResult?: { content: string }; deepThinking?: string; libraryDocs?: string }>;
+  docCache?: DocumentationCache;  // Store for validation pass
 }
 
 export async function executeResearchPlan(ctx: ExecutionContext): Promise<ExecutionResult> {
   const result: ExecutionResult = {};
   const { query, enrichedContext, actionPlan, context7Client, options, env } = ctx;
 
+  // Extract RootPlan structure (new) or construct from legacy
+  const rootPlan = extractRootPlan(actionPlan, options) || {
+    mainQuery: { complexity: actionPlan.complexity, steps: actionPlan.steps },
+    subQuestions: [],
+    sharedDocumentation: { libraries: options?.techStack || [], topics: ['getting started'] }
+  };
+  
+  // Check if ANY query needs Context7
+  const needsContext7 = rootPlan.mainQuery.steps.some(s => s.includes('context7') || s.includes('library')) ||
+                        (options?.subQuestions?.length || 0) > 0;  // Sub-Qs might need it
+  
+  // Fetch shared base documentation if needed
+  let docCache: DocumentationCache | undefined;
+  if (needsContext7 && context7Client && rootPlan.sharedDocumentation.libraries.length > 0) {
+    console.error('[Exec] Fetching shared base documentation...');
+    const base = await fetchSharedDocumentation(context7Client, rootPlan.sharedDocumentation);
+    docCache = { base, subQSpecific: {} };
+  }
+
   // Determine which tools to run based on plan and depth level
   const shouldRunPerplexity = actionPlan.steps.some(s => s.includes('perplexity') || s.includes('web'));
   const shouldRunDeepThinking = actionPlan.steps.some(s => s.includes('deep') || s.includes('thinking'));
   const shouldRunArxiv = (ctx.depth >= 3 || actionPlan.steps.some(s => s.includes('arxiv') || s.includes('papers'))) && !actionPlan.toolsToSkip?.includes('arxiv_search');
-  const shouldRunContext7 = actionPlan.steps.some(s => s.includes('context7') || s.includes('library') || s.includes('docs'));
+  const shouldRunContext7Main = actionPlan.steps.some(s => s.includes('context7') || s.includes('library') || s.includes('docs'));
 
   // PHASE 1: Run all data gathering in parallel
   console.error('[Exec] Phase 1: Gathering data in parallel...');
@@ -64,22 +84,85 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
     })());
   }
 
-  if (shouldRunContext7 && options?.techStack?.length && context7Client) {
+  // Main query Context7 (if specified and not using shared docs)
+  if (shouldRunContext7Main && context7Client) {
     gatheringTasks.push((async () => {
-      console.error('[Exec] → Library docs...');
-      const docs = await Promise.all(options.techStack!.map(lib => searchLibraryDocs(context7Client, lib, query)));
-      result.libraryDocs = docs.filter(Boolean).join('\n\n---\n\n');
+      console.error('[Exec] → Library docs for main query...');
+      
+      // If we have shared docs, combine with any main-specific queries
+      let allDocs: string[] = [];
+      
+      if (docCache?.base) {
+        allDocs = Object.values(docCache.base).map(d => d.content);
+      }
+      
+      // Check if main query needs additional specific docs beyond shared
+      // For now, use techStack as fallback
+      if (options?.techStack?.length && !docCache) {
+        const docs = await Promise.all(options.techStack.map(lib => searchLibraryDocs(context7Client, lib, query)));
+        allDocs.push(...docs.filter(Boolean));
+      }
+      
+      result.libraryDocs = allDocs.join('\n\n---\n\n');
     })());
+  } else if (docCache?.base && Object.keys(docCache.base).length > 0) {
+    // Use shared docs for main query
+    result.libraryDocs = Object.values(docCache.base).map(d => d.content).join('\n\n---\n\n');
   }
 
   // Sub-questions run in parallel with main query
+  // Each sub-Q gets its own planning call
   if (options?.subQuestions?.length) {
     gatheringTasks.push((async () => {
-      console.error(`[Exec] → ${options.subQuestions!.length} sub-questions...`);
+      const subQuestions = options.subQuestions!;
+      console.error(`[Exec] → ${subQuestions.length} sub-questions (with individual planning)...`);
+      
+      // Plan all sub-questions in parallel
+      const subQPlans = await Promise.all(
+        subQuestions.map((q) => 
+          planSubQuestion(env?.GEMINI_API_KEY || '', q, enrichedContext, options.techStack)
+        )
+      );
+      
+      // Execute each sub-Q with its plan
       result.subQuestionResults = await Promise.all(
-        options.subQuestions!.map(async (sq) => {
-          const sub: any = { question: sq };
-          sub.perplexityResult = await perplexitySearch(withContext(sq, enrichedContext), env?.PERPLEXITY_API_KEY);
+        subQuestions.map(async (question, idx) => {
+          const sub: any = { question };
+          const plan = subQPlans[idx];
+          
+          console.error(`[Exec]   Sub-Q ${idx + 1}: ${plan.tools.join(', ')}`);
+          
+          // Execute based on plan
+          if (plan.tools.includes('perplexity')) {
+            sub.perplexityResult = await perplexitySearch(withContext(question, enrichedContext), env?.PERPLEXITY_API_KEY);
+          }
+          
+          // Sub-Q specific Context7 call (if planned)
+          if (plan.tools.includes('context7') && context7Client) {
+            const lib = plan.params?.library || rootPlan.sharedDocumentation.libraries[0];
+            const topic = plan.params?.context7Query || question;
+            
+            if (lib) {
+              const specificDocs = await searchLibraryDocs(context7Client, lib, topic);
+              sub.libraryDocs = specificDocs;
+              
+              // Store in cache for validation pass
+              if (docCache) {
+                docCache.subQSpecific[idx] = {
+                  content: specificDocs,
+                  library: lib,
+                  topic
+                };
+              }
+            }
+          }
+          
+          // Combine shared base + sub-Q specific docs
+          if (docCache?.base && Object.keys(docCache.base).length > 0) {
+            const baseDocs = Object.values(docCache.base).map(d => d.content).join('\n\n---\n\n');
+            sub.libraryDocs = sub.libraryDocs ? `${baseDocs}\n\n---\n\n${sub.libraryDocs}` : baseDocs;
+          }
+          
           return sub;
         })
       );
@@ -101,6 +184,11 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
       }
     );
     result.deepThinking = response.content;
+  }
+
+  // Store doc cache for validation pass
+  if (docCache && (Object.keys(docCache.base).length > 0 || Object.keys(docCache.subQSpecific).length > 0)) {
+    result.docCache = docCache;
   }
 
   return result;
@@ -170,4 +258,74 @@ ${searchResults || 'No search results available yet.'}
 
 Provide a thorough, well-structured analysis. Be specific and cite evidence from the search results where applicable.
 `.trim();
+}
+
+/**
+ * Fetch shared base documentation from Context7
+ * This is fetched once and shared across all queries
+ */
+async function fetchSharedDocumentation(
+  client: Client | null,
+  sharedDocs: { libraries: string[]; topics: string[] }
+): Promise<DocumentationCache['base']> {
+  if (!client || !sharedDocs.libraries.length) {
+    return {};
+  }
+
+  console.error(`[Exec] Fetching shared docs for: ${sharedDocs.libraries.join(', ')}`);
+  
+  const baseCache: DocumentationCache['base'] = {};
+  
+  await Promise.all(
+    sharedDocs.libraries.map(async (lib) => {
+      try {
+        // Fetch general docs for this library
+        const topicQuery = sharedDocs.topics.length > 0 ? sharedDocs.topics.join(' ') : 'getting started';
+        const docs = await searchLibraryDocs(client, lib, topicQuery);
+        
+        if (docs && !docs.includes('Could not find library')) {
+          baseCache[lib] = {
+            content: docs,
+            topic: topicQuery
+          };
+        }
+      } catch (error) {
+        console.error(`[Exec] Failed to fetch shared docs for ${lib}:`, error);
+      }
+    })
+  );
+  
+  return baseCache;
+}
+
+/**
+ * Extract RootPlan from action plan (if new structure present)
+ */
+function extractRootPlan(actionPlan: ResearchActionPlan, options?: any): RootPlan {
+  if (actionPlan._rawPlan) {
+    return {
+      mainQuery: actionPlan._rawPlan.mainQuery || {
+        complexity: actionPlan.complexity,
+        steps: actionPlan.steps
+      },
+      subQuestions: [],  // Sub-Qs will be planned separately
+      sharedDocumentation: actionPlan._rawPlan.sharedDocumentation || {
+        libraries: options?.techStack || [],
+        topics: ['getting started']
+      }
+    };
+  }
+  
+  // Fallback: construct from legacy structure
+  return {
+    mainQuery: {
+      complexity: actionPlan.complexity,
+      steps: actionPlan.steps
+    },
+    subQuestions: [],  // Sub-Qs will be planned separately via planSubQuestion
+    sharedDocumentation: {
+      libraries: options?.techStack || [],
+      topics: ['getting started']
+    }
+  };
 }
