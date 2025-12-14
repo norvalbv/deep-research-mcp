@@ -575,19 +575,11 @@ Use this to efficiently read research without bloating context.`,
 
       // Parse unified citation format
       if (citation) {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:parseCitation',message:'Parsing citation',data:{citation},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
-        // #endregion
-        
         // Remove brackets if present: [R-135216:section:5-19] -> R-135216:section:5-19
         const cleanCitation = citation.replace(/^\[|\]$/g, '');
         
         // Split by colons to parse components
         const parts = cleanCitation.split(':');
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:splitParts',message:'Citation parts',data:{parts,partsLength:parts.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
-        // #endregion
         
         // First part must be report ID (R-NNNNNN)
         if (!parts[0] || !/^R-\d+$/.test(parts[0])) {
@@ -608,15 +600,9 @@ Use this to efficiently read research without bloating context.`,
           if (lineMatch) {
             // Line range format: R-135216:5-19
             lineRange = { start: parseInt(lineMatch[1]), end: parseInt(lineMatch[2]) };
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:lineRange',message:'Detected line range',data:{lineRange},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
-            // #endregion
           } else {
             // Section ID format: R-135216:key_findings
             sectionId = parts[1];
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:sectionId',message:'Detected section ID',data:{sectionId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
-            // #endregion
           }
         } else if (parts.length === 3) {
           // Format: R-135216:section_id:5-19
@@ -625,9 +611,6 @@ Use this to efficiently read research without bloating context.`,
           if (lineMatch) {
             lineRange = { start: parseInt(lineMatch[1]), end: parseInt(lineMatch[2]) };
           }
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:sectionWithRange',message:'Detected section with line range',data:{sectionId,lineRange},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
-          // #endregion
         }
 
         // Find report by ID using registry
@@ -644,9 +627,6 @@ Use this to efficiently read research without bloating context.`,
         }
 
         targetPath = report.path;
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:foundReport',message:'Found report path',data:{targetPath,reportId,sectionId,lineRange},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
-        // #endregion
       }
 
       // Validate target path
@@ -680,17 +660,9 @@ Use this to efficiently read research without bloating context.`,
         
         // Check if report has new sectioned structure
         if (structured?.sections && structured?.executiveSummary) {
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:hasStructure',message:'Report has sectioned structure',data:{hasSectionId:!!sectionId,hasLineRange:!!lineRange,sectionCount:Object.keys(structured.sections).length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
-          // #endregion
-          
           // NEW STRUCTURE: Support condensed/sectioned reading
           
           if (sectionId) {
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:readingSection',message:'Reading specific section',data:{sectionId,availableSections:Object.keys(structured.sections)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
-            // #endregion
-            
             // Return specific section (with optional line range within section)
             const { formatSectionView } = await import('./sectioning.js');
             const section = structured.sections[sectionId];
@@ -716,10 +688,6 @@ Use this to efficiently read research without bloating context.`,
                 }]
               };
             }
-            
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:read_report:returnSection',message:'Returning section',data:{sectionId,contentLength:section.content.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'SECTION_READ'})}).catch(()=>{});
-            // #endregion
             
             return {
               content: [{
@@ -1193,9 +1161,6 @@ Poll this endpoint every ~30 seconds until status is "completed" or "failed".`,
         
         if (needsRegeneration) {
           console.error('[Jobs] Old job detected, regenerating summaries on-the-fly...');
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'index.ts:check_research_status:regenerate',message:'Regenerating summaries for old job',data:{jobId:job.id,sectionCount:Object.keys(sections).length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'FIX'})}).catch(()=>{});
-          // #endregion
           
           const ctrl = getController();
           await generateSectionSummaries(sections, ctrl.getEnv().GEMINI_API_KEY);

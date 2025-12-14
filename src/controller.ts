@@ -11,7 +11,7 @@ import { ComplexityLevel, Section, ExecutiveSummary } from './types/index.js';
 import { createFallbackPlan, generateConsensusPlan, ResearchActionPlan } from './planning.js';
 import { executeResearchPlan } from './execution.js';
 import { synthesizeFindings, SynthesisOutput } from './synthesis.js';
-import { runChallenge, runConsensusValidation, runSufficiencyVote, ChallengeResult, SufficiencyVote } from './validation.js';
+import { runChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, ChallengeResult, SufficiencyVote } from './validation.js';
 import { formatMarkdown, ResearchResult } from './formatting.js';
 import { generateSectionSummaries } from './sectioning.js';
 
@@ -67,7 +67,8 @@ export class ResearchController {
       env: this.env,
     });
 
-    // Step 3: Synthesize findings into unified answer (structured JSON)
+    // Step 3: Synthesize findings into unified answer
+    // Automatically uses phased synthesis if sub-questions exist (token-efficient)
     let synthesisOutput = await synthesizeFindings(
       this.env.GEMINI_API_KEY,
       query,
@@ -75,6 +76,15 @@ export class ResearchController {
       execution,
       options
     );
+
+    // Step 3.5: Code validation pass (if Context7 docs available)
+    if (execution.docCache && Object.keys(execution.docCache.base).length > 0) {
+      synthesisOutput = await validateCodeAgainstDocs(
+        this.env.GEMINI_API_KEY,
+        synthesisOutput,
+        execution.docCache
+      );
+    }
 
     // Step 4: Run challenge + consensus in PARALLEL to save time
     console.error('[Research] Running challenge + consensus in parallel...');

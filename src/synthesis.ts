@@ -34,7 +34,7 @@ const SECTION_DELIMITER = /<!--\s*SECTION:(\w+)\s*-->/g;
 
 /**
  * Synthesize all gathered research data into a unified, context-aware answer
- * Returns structured output parsed from markdown with section delimiters
+ * Automatically uses phased synthesis if sub-questions exist (for token efficiency)
  */
 export async function synthesizeFindings(
   geminiKey: string | undefined,
@@ -47,15 +47,19 @@ export async function synthesizeFindings(
     return buildFallbackSynthesis(execution);
   }
 
-  console.error('[Synthesis] Combining all findings...');
+  // Use phased synthesis if sub-questions exist (40% token savings)
+  const usePhased = (options?.subQuestions?.length || 0) > 0;
 
-  const prompt = buildSynthesisPrompt(query, enrichedContext, execution, options);
+  if (usePhased) {
+    console.error('[Synthesis] Using phased approach (token-efficient)...');
+    return synthesizePhased(geminiKey, query, enrichedContext, execution, options);
+  }
+
+  // Single-phase synthesis for simple queries
+  console.error('[Synthesis] Single-phase synthesis...');
+  const prompt = buildSynthesisPrompt(query, enrichedContext, execution, options, false);
 
   try {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis.ts:synthesizeFindings',message:'Calling LLM for synthesis',data:{promptLength:prompt.length,hasSubQuestions:!!options?.subQuestions?.length,includeCode:!!options?.includeCodeExamples},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A',runId:'markdown-fix'})}).catch(()=>{});
-    // #endregion
-    
     const response = await callLLM(prompt, {
       provider: 'gemini',
       model: 'gemini-2.5-flash',
@@ -64,39 +68,29 @@ export async function synthesizeFindings(
       maxOutputTokens: 32000
     });
     
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis.ts:synthesizeFindings:afterLLM',message:'LLM response received',data:{responseLength:response.content.length,responsePreview:response.content.substring(0,500),responseEnd:response.content.substring(response.content.length-200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C,D',runId:'markdown-fix'})}).catch(()=>{});
-    // #endregion
-    
-    // Parse markdown with section delimiters
-    const parsed = parseMarkdownSections(response.content, options?.subQuestions);
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis.ts:synthesizeFindings:success',message:'Successfully parsed markdown sections',data:{hasOverview:!!parsed.overview,overviewLength:parsed.overview?.length,hasSubQuestions:!!parsed.subQuestions,subQuestionCount:Object.keys(parsed.subQuestions || {}).length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B',runId:'markdown-fix'})}).catch(()=>{});
-    // #endregion
-    
-    return parsed;
+    return parseMarkdownSections(response.content, options?.subQuestions);
   } catch (error) {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis.ts:synthesizeFindings:error',message:'Synthesis failed',data:{error:String(error),errorMessage:error instanceof Error ? error.message : 'unknown'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E',runId:'markdown-fix'})}).catch(()=>{});
-    // #endregion
-    
     console.error('[Synthesis] Error:', error);
     return buildFallbackSynthesis(execution);
   }
 }
 
+/**
+ * Build synthesis prompt (unified for single-phase and main-query-only)
+ * @param mainQueryOnly - If true, omits sub-question sections (for phased synthesis)
+ */
 function buildSynthesisPrompt(
   query: string,
   enrichedContext: string | undefined,
   execution: ExecutionResult,
-  options?: SynthesisOptions
+  options?: SynthesisOptions,
+  mainQueryOnly: boolean = false
 ): string {
   const sections: string[] = [];
 
-  sections.push(`You are synthesizing research findings into a unified, actionable answer.
+  sections.push(`You are synthesizing research findings${mainQueryOnly ? ' for the MAIN QUERY ONLY (sub-questions handled separately)' : ''}.
 
-**Original Research Query:** ${query}
+**${mainQueryOnly ? 'Main Research Query' : 'Original Research Query'}:** ${query}
 `);
 
   if (enrichedContext) {
@@ -106,7 +100,7 @@ ${enrichedContext}
   }
 
   if (options?.constraints?.length) {
-    sections.push(`**Constraints to Respect:**
+    sections.push(`**Constraints${mainQueryOnly ? '' : ' to Respect'}:**
 - ${options.constraints.join('\n- ')}
 `);
   }
@@ -143,7 +137,7 @@ ${enrichedContext}
 `);
 
   if (execution.perplexityResult?.content) {
-    sections.push(`**Web Search Results [perplexity]:**
+    sections.push(`**Web Search${mainQueryOnly ? '' : ' Results'} [perplexity]:**
 ${execution.perplexityResult.content.slice(0, 3000)}
 
 Sources: ${execution.perplexityResult.sources?.join(', ') || 'Not available'}
@@ -154,7 +148,7 @@ Sources: ${execution.perplexityResult.sources?.join(', ') || 'Not available'}
     const paperSummaries = execution.arxivPapers.papers
       .map(p => `- **${p.title}** [arxiv:${p.id}]: ${p.summary}`)
       .join('\n');
-    sections.push(`**Academic Papers Found [arxiv]:**
+    sections.push(`**Academic Papers${mainQueryOnly ? '' : ' Found'} [arxiv]:**
 ${paperSummaries}
 `);
   }
@@ -165,7 +159,8 @@ ${execution.libraryDocs.slice(0, 2000)}
 `);
   }
 
-  if (execution.subQuestionResults?.length) {
+  // Only include sub-question data if NOT main-query-only
+  if (!mainQueryOnly && execution.subQuestionResults?.length) {
     const subResults = execution.subQuestionResults
       .map(sq => {
         const sources = [];
@@ -185,14 +180,29 @@ ${extractContent(execution.deepThinking).slice(0, 2000)}
 `);
   }
 
-  // Build section format instructions
-  const subQuestionSections = options?.subQuestions?.length
-    ? options.subQuestions.map((q, i) => `<!-- SECTION:q${i + 1} -->
+  // Task instructions
+  if (mainQueryOnly) {
+    sections.push(`---
+
+**YOUR TASK:**
+
+Write a comprehensive answer to the main query. Be thorough and detailed.
+
+**Important:**
+- Include code examples where relevant (in markdown blocks)
+- Use inline citations: [perplexity:url], [context7:library-name], [arxiv:paper-id]
+- This is ONLY for the main query - sub-questions handled separately
+- Be comprehensive, don't artificially limit length
+`);
+  } else {
+    // Build section format instructions for full synthesis
+    const subQuestionSections = options?.subQuestions?.length
+      ? options.subQuestions.map((q, i) => `<!-- SECTION:q${i + 1} -->
 ## Q${i + 1}: ${q}
 [Comprehensive answer - multiple paragraphs with examples]`).join('\n\n')
-    : '';
+      : '';
 
-  sections.push(`---
+    sections.push(`---
 
 **YOUR TASK:**
 
@@ -220,6 +230,7 @@ ${subQuestionSections}
 - Cite sources when making specific claims or showing code examples
 - Don't artificially limit your response length
 `);
+  }
 
   return sections.join('\n');
 }
@@ -228,10 +239,6 @@ ${subQuestionSections}
  * Parse markdown response with section delimiters into structured output
  */
 function parseMarkdownSections(markdown: string, subQuestions?: string[]): SynthesisOutput {
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis.ts:parseMarkdownSections',message:'Parsing markdown sections',data:{markdownLength:markdown.length,hasSubQuestions:!!subQuestions?.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'PARSE',runId:'markdown-fix'})}).catch(()=>{});
-  // #endregion
-
   const result: SynthesisOutput = {
     overview: '',
   };
@@ -244,10 +251,6 @@ function parseMarkdownSections(markdown: string, subQuestions?: string[]): Synth
   while ((match = delimiterRegex.exec(markdown)) !== null) {
     delimiterMatches.push({ name: match[1], index: match.index + match[0].length });
   }
-
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis.ts:parseMarkdownSections:delimiters',message:'Found delimiters',data:{count:delimiterMatches.length,names:delimiterMatches.map(d=>d.name)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'PARSE',runId:'markdown-fix'})}).catch(()=>{});
-  // #endregion
 
   // Extract content between delimiters
   for (let i = 0; i < delimiterMatches.length; i++) {
@@ -280,13 +283,176 @@ function parseMarkdownSections(markdown: string, subQuestions?: string[]): Synth
 
   // Fallback: if no delimiters found, treat entire response as overview
   if (!result.overview && delimiterMatches.length === 0) {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis.ts:parseMarkdownSections:fallback',message:'No delimiters found, using entire response as overview',data:{markdownLength:markdown.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'PARSE',runId:'markdown-fix'})}).catch(()=>{});
-    // #endregion
     result.overview = markdown;
   }
 
   return result;
+}
+
+/**
+ * PHASED SYNTHESIS (internal - called by synthesizeFindings)
+ * 1. Synthesize main query overview
+ * 2. Extract key findings summary (~500 tokens)
+ * 3. Synthesize each sub-question with key findings injected
+ */
+async function synthesizePhased(
+  geminiKey: string,
+  query: string,
+  enrichedContext: string | undefined,
+  execution: ExecutionResult,
+  options?: SynthesisOptions
+): Promise<SynthesisOutput> {
+  // Phase 1: Main query synthesis (reuses buildSynthesisPrompt with mainQueryOnly flag)
+  console.error('[Synthesis] Phase 1: Main query overview...');
+  const mainPrompt = buildSynthesisPrompt(query, enrichedContext, execution, options, true);
+  const mainResponse = await callLLM(mainPrompt, {
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    apiKey: geminiKey,
+    timeout: 60000,
+    maxOutputTokens: 16000
+  });
+
+  const result: SynthesisOutput = {
+    overview: mainResponse.content.trim(),
+  };
+
+  // Phase 2: Extract key findings
+  console.error('[Synthesis] Phase 2: Extracting key findings...');
+  const keyFindings = await extractKeyFindings(geminiKey, mainResponse.content, query);
+  
+  // Phase 3: Sub-question synthesis in parallel with key findings injection
+  console.error(`[Synthesis] Phase 3: ${options!.subQuestions!.length} sub-questions (parallel, with key findings)...`);
+  const subQSyntheses = await Promise.all(
+    options!.subQuestions!.map((subQ, idx) => 
+      synthesizeSubQuestion(
+        geminiKey,
+        subQ,
+        keyFindings,
+        execution.subQuestionResults?.[idx],
+        execution.libraryDocs,
+        options
+      )
+    )
+  );
+
+  // Compile sub-question results
+  result.subQuestions = {};
+  subQSyntheses.forEach((answer, idx) => {
+    result.subQuestions![`q${idx + 1}`] = {
+      question: options!.subQuestions![idx],
+      answer
+    };
+  });
+
+  // Add additional insights if needed
+  if (execution.deepThinking) {
+    result.additionalInsights = `**Deep Analysis:** ${extractContent(execution.deepThinking).slice(0, 1000)}`;
+  }
+
+  return result;
+}
+
+/**
+ * Extract key findings summary from main synthesis (~500 tokens)
+ */
+async function extractKeyFindings(
+  geminiKey: string,
+  mainSynthesis: string,
+  query: string
+): Promise<string> {
+  const prompt = `Extract the KEY FINDINGS from this research synthesis in ~500 words.
+
+Original Query: ${query}
+
+Synthesis:
+${mainSynthesis}
+
+---
+
+Write a concise summary of:
+1. Main conclusions
+2. Important patterns/principles discovered
+3. Critical technical details (API names, approach names, etc.)
+4. Any warnings or caveats
+
+This will be used to ensure sub-questions don't contradict the main findings.
+
+Keep it under 500 words, be specific.`;
+
+  const response = await callLLM(prompt, {
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    apiKey: geminiKey,
+    timeout: 30000,
+    maxOutputTokens: 2000
+  });
+
+  return response.content.trim();
+}
+
+/**
+ * Synthesize a single sub-question with key findings context
+ */
+async function synthesizeSubQuestion(
+  geminiKey: string,
+  subQuestion: string,
+  keyFindings: string,
+  subQData: any,
+  sharedLibraryDocs?: string,
+  options?: SynthesisOptions
+): Promise<string> {
+  const sections: string[] = [];
+
+  sections.push(`You are answering a SUB-QUESTION that is part of a larger research query.
+
+**Sub-Question:** ${subQuestion}
+
+**Key Findings from Main Research (ensure consistency):**
+${keyFindings}
+
+---
+
+**GATHERED DATA FOR THIS SUB-QUESTION:**
+`);
+
+  if (subQData?.perplexityResult?.content) {
+    sections.push(`**Web Search [perplexity]:**
+${subQData.perplexityResult.content.slice(0, 2000)}
+`);
+  }
+
+  if (subQData?.libraryDocs) {
+    sections.push(`**Library Documentation [context7]:**
+${subQData.libraryDocs.slice(0, 1500)}
+`);
+  } else if (sharedLibraryDocs) {
+    sections.push(`**Shared Library Documentation [context7]:**
+${sharedLibraryDocs.slice(0, 1500)}
+`);
+  }
+
+  sections.push(`---
+
+**YOUR TASK:**
+
+Answer the sub-question thoroughly. Ensure your answer:
+- Aligns with the key findings above (don't contradict)
+- Uses inline citations: [perplexity:url], [context7:library], [arxiv:id]
+- Includes code examples if relevant
+- Is comprehensive and detailed
+
+Don't artificially limit your response length.`);
+
+  const response = await callLLM(sections.join('\n'), {
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    apiKey: geminiKey,
+    timeout: 60000,
+    maxOutputTokens: 8000
+  });
+
+  return response.content.trim();
 }
 
 /**

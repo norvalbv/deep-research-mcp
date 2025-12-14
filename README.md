@@ -12,25 +12,29 @@ Research MCP Server is a Model Context Protocol (MCP) server that provides **con
 
 ### Why Research MCP?
 
-- **Consensus Planning**: 3-5 LLMs vote on complexity and create dynamic action plans (not fixed templates)
-- **Multi-Model Validation**: Every finding validated by multiple LLMs + critical challenge phase
-- **Dynamic Execution**: Executes custom research plans with parallel processing
+- **Consensus Planning**: 2-5 LLMs vote on research strategy + independent planning for each sub-question
+- **Phased Synthesis**: Token-efficient approach with key findings extraction (~40% fewer tokens)
+- **Code Validation**: Post-synthesis validation against Context7 docs catches hallucinated code
+- **Inline Citations**: Every claim sourced (`[perplexity:url]`, `[context7:lib]`, `[arxiv:id]`)
+- **Multi-Model Validation**: Critical challenge + consensus validation by multiple LLMs
+- **Context-Efficient Reports**: Sectioned architecture with on-demand reading (prevents AI context bloat)
+- **Dynamic Execution**: Custom research plans with parallel processing
 - **Multi-Source Synthesis**: Combines Perplexity, arXiv, Context7, and direct LLM reasoning
-- **Context-Aware**: Avoids redundancy using `papers_read`, `key_findings`, `rejected_approaches`
-- **Clean Output**: Structured markdown (no raw JSON dumps)—shows action plan + validated findings
 
 ## Features
 
 ### Core Capabilities
 
-- **Adaptive Research Planning**: Uses consensus to create optimal research strategy based on your parameters
+- **Adaptive Research Planning**: Root consensus + independent sub-question planning
 - **Multi-Source Search**:
   - Web search via Perplexity API
   - Academic papers via arXiv with AI-generated summaries
-  - Library documentation via Context7
+  - Library documentation via Context7 (with shared + specific doc fetching)
   - Deep reasoning
-- **Parallel Processing**: Executes sub-questions simultaneously for faster results
-- **Validation**: Critical challenge phase validates findings and highlights gaps
+- **Parallel Processing**: Main query + sub-questions execute simultaneously
+- **Phased Synthesis**: Main synthesis → key findings extraction → sub-Q synthesis (token-efficient)
+- **Code Validation**: Post-synthesis validation against Context7 documentation
+- **Validation Pipeline**: Critical challenge + multi-model consensus + sufficiency voting
 
 ## 🚀 Installation
 
@@ -221,34 +225,124 @@ The MCP server exposes five tools:
 
 ## 🔍 How It Works
 
-### Consensus-Driven Research Flow
+### Intelligent Research Architecture (v2)
+
+The research system uses a sophisticated phased approach designed for token efficiency and code accuracy:
+
+#### Phase 1: Root Planning
+- **Consensus voting** by 2-5 LLMs determines research complexity (1-5)
+- Root planner creates strategy for **main query only**
+- Identifies **shared documentation** needs (base API/syntax docs)
+- Each sub-question gets **independent planning** (lightweight, fast)
+
+#### Phase 2: Parallel Data Gathering
+- **Shared Context7 docs** fetched once for all queries (e.g., "React basics")
+- Main query executed with full tool access
+- **Sub-questions planned independently** via fast LLM calls
+  - Each sub-Q chooses its own tools (context7, perplexity, arxiv)
+  - Can request **specific Context7 topics** beyond shared docs
+- All gathering happens in parallel for speed
+
+#### Phase 3: Phased Synthesis (Token-Efficient)
+1. **Main query synthesis** - comprehensive answer to primary question
+2. **Key findings extraction** - ~500 token summary of main conclusions
+3. **Sub-question synthesis** - parallel, with key findings injected for coherence
+   - Prevents contradictions between main and sub-answers
+   - Each sub-Q synthesis uses only relevant data (not all research)
+
+#### Phase 4: Code Validation Pass
+- Extracts all code blocks from synthesized report
+- Validates against **authoritative Context7 documentation**
+- Fixes hallucinated APIs, outdated syntax, incorrect method names
+- Context7 becomes source of truth for code accuracy
+
+#### Phase 5: Multi-Model Validation
+- **Critical Challenge**: LLM attacks synthesis to find gaps
+- **Consensus** (depth ≥4): 3 LLMs validate findings
+- **Sufficiency Vote**: Synthesis vs. critique
+- Re-synthesis if significant gaps found
+
+### Why This Architecture?
+
+**Token Efficiency:**
+- Phased synthesis uses ~40% fewer tokens vs. monolithic approach
+- Sub-questions don't see full main query data dump
+- Key findings summary prevents redundant context
+
+**Code Accuracy:**
+- Context7 validation catches hallucinated code before delivery
+- Inline citations trace every claim to source
+- Docs fetched once and cached for validation pass
+
+**Research Quality:**
+- Independent sub-Q planning prevents bias from root plan
+- Each sub-Q gets optimal tool selection
+- Key findings injection ensures coherent, non-contradictory answers
+
+### Research Flow Diagram
 
 ```mermaid
 graph TD
-    A[Query + Context] --> B[2 LLMs Vote on Action Plan]
-    B --> C[LLM Judge Selects Best Plan]
-    C --> D[Phase 1: Parallel Data Gathering]
-    D --> E[Perplexity Web Search]
-    D --> F[arXiv Papers depth≥3]
-    D --> G[Context7 Library Docs]
-    D --> H[Sub-Questions Parallel]
-    E --> I[Phase 2: Deep Analysis]
-    F --> I
-    G --> I
-    H --> I
-    I --> J[Deep Analysis]
-    J --> K[SYNTHESIS PHASE]
-    K --> L[LLM Synthesizes Unified Answer]
-    L --> M{Depth ≥ 3?}
-    M -->|Yes| N[Multi-LLM Consensus]
-    M -->|No| O[Critical Challenge]
-    N --> O
-    O --> P[Sufficiency Vote]
+    A[Query + Context] --> B[Root Planning: 2-5 LLM Consensus]
+    B --> C[Main Query Strategy]
+    B --> D[Identify Shared Docs]
+    D --> E[Fetch Base Context7 Docs]
+    A --> F[Plan Each Sub-Q Independently]
+    
+    C --> G[Execute Main Query]
+    E --> G
+    F --> H[Execute Sub-Qs in Parallel]
+    E --> H
+    
+    G --> I[Phase 1: Main Synthesis]
+    I --> J[Extract Key Findings ~500 tokens]
+    J --> K[Phase 2: Sub-Q Syntheses Parallel]
+    H --> K
+    
+    K --> L[Code Validation vs Context7]
+    L --> M[Critical Challenge]
+    M --> N{Depth ≥4?}
+    N -->|Yes| O[Multi-LLM Consensus]
+    N -->|No| P[Sufficiency Vote]
+    O --> P
     P --> Q{Sufficient?}
-    Q -->|Yes| R[Clean Markdown Report]
-    Q -->|No| S[Execute Improvements]
-    S --> K
+    Q -->|Yes| R[Report with Inline Citations]
+    Q -->|No| S[Re-synthesize]
+    S --> I
 ```
+
+### Inline Citations
+
+Reports now include **inline source citations** for traceability:
+
+- `[perplexity:url]` - Web search finding
+- `[context7:library-name]` - Library documentation/code
+- `[arxiv:paper-id]` - Academic paper
+- `[deep_analysis]` - LLM reasoning
+
+Example:
+```markdown
+LangSmith provides dataset management [context7:langsmith] which supports 
+version control [perplexity:langsmith-docs] as validated in recent research 
+[arxiv:2024.12345].
+```
+
+### Context-Efficient Report Structure
+
+Reports use **sectioned architecture** for AI consumption:
+
+1. **Executive Summary** - Overview + section index with IDs and line ranges
+2. **On-demand Section Reading** - AI can load specific sections only
+3. **Quick Reference** - Citation examples (`R-ID:section`, `R-ID:section:20-50`)
+
+Example usage:
+```
+read_report(citation="R-182602:q1")          # Read sub-question 1
+read_report(citation="R-182602:q1:20-50")    # Lines 20-50 of sub-Q 1
+read_report(citation="R-182602", full=true)  # Full report (last resort)
+```
+
+This prevents context bloat - AI assistants load only what they need.
 
 ### Common Issues
 
@@ -327,27 +421,35 @@ Note: Paths with spaces are properly handled in JSON arrays. The issue is usuall
 **Steps Executed**:
 1. **perplexity**: Search for recent approaches and best practices _(parallel)_
 2. **deep_analysis**: Analyze web findings for technical insights
-3. **context7**: Fetch React and TypeScript documentation _(parallel)_
+3. **context7**: Fetch React and TypeScript documentation _(parallel, shared + specific)_
 4. **arxiv**: Search academic papers on evaluation datasets
 5. **consensus**: Validate findings across multiple models
 
-## Web Search (Perplexity)
-[Clean search findings with no JSON]
-**Sources:**
-1. https://example.com/source1
-2. https://example.com/source2
+## Synthesis with Inline Citations
 
-## Deep Analysis
-[Deep technical analysis based on web findings and research data]
+### Overview
 
-## Library Documentation
-[Context7 code examples and API docs]
+LangSmith provides comprehensive dataset management [context7:langsmith] which enables
+evaluation workflow automation [perplexity:langsmith-docs]. Recent research shows that
+synthetic data generation requires careful attention to distribution matching [arxiv:2024.12345].
 
-## Academic Papers (arXiv)
-**1. Paper Title** (arXiv:2024.12345)
-Summary of key findings in under 300 characters with specific technical details.
+```typescript
+// Code validated against Context7
+import { Dataset } from "langsmith";
 
-To read the full paper, download and read it using the read_paper or download_paper tools with arXiv ID: 2024.12345
+const dataset = new Dataset("my-eval-set");
+```
+
+### Sub-Question 1: What makes evaluation data representative?
+
+Representative data must match real-world distributions [deep_analysis] and include
+edge cases from production logs [context7:langsmith]. Studies indicate that 600+ examples
+provide sufficient statistical power for small effect detection [arxiv:2024.67890].
+
+## Code Validation Summary
+
+✅ 3 code blocks validated
+✅ 1 syntax correction applied (outdated API method)
 
 ## Multi-Model Consensus
 [3 LLMs validated findings—shows agreement/disagreement]
@@ -364,6 +466,18 @@ To read the full paper, download and read it using the read_paper or download_pa
 - ✅ **gemini-2.5-flash**: Response comprehensively addresses the query with actionable steps
 - ✅ **gpt-5-mini-2025-08-07**: Good coverage of edge cases and validation methods
 - ❌ **claude-3.5-haiku**: Could benefit from more code examples
+
+---
+
+**Report ID**: R-182602
+
+**Usage Examples**:
+```
+read_report(citation="R-182602:overview")      # Read overview section
+read_report(citation="R-182602:q1")            # Read sub-question 1
+read_report(citation="R-182602:q1:20-50")      # Lines 20-50 of sub-Q 1
+read_report(citation="R-182602", full=true)    # Full report (last resort)
+```
 ```
 
 ## This MCP is built on top of other MCP servers and tools

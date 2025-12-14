@@ -44,10 +44,6 @@ async function callGemini(
 ): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'llm.ts:callGemini',message:'Calling Gemini API',data:{promptLength:prompt.length,timeout,maxOutputTokens,model},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'F,H'})}).catch(()=>{});
-  // #endregion
-  
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -67,14 +63,7 @@ async function callGemini(
     }
 
     const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const finishReason = data.candidates?.[0]?.finishReason;
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'llm.ts:callGemini:response',message:'Gemini response received',data:{textLength:text.length,finishReason,hasText:!!text},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'F,G'})}).catch(()=>{});
-    // #endregion
-    
-    return text;
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
   } finally {
     clearTimeout(timeoutId);
   }
@@ -251,10 +240,6 @@ export const compressText = async (text: string, maxWords: number, geminiKey?: s
     `Summarize the following text to be approximately ${maxWords} words. Focus on the most important information and insights. Be concise but preserve key details.\n\nText to summarize:\n${text}`, 
     { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key }
   );
-  
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'llm.ts:compressText',message:'Compressed text',data:{originalWords:wordCount,targetWords:maxWords,compressedWords:summary.content.split(/\s+/).length,compressedLength:summary.content.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A_FIX'})}).catch(()=>{});
-  // #endregion
   
   return summary.content;
 };

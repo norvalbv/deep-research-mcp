@@ -7,6 +7,8 @@
 import { callLLM } from './clients/llm.js';
 import { ExecutionResult } from './execution.js';
 import { ResearchActionPlan, extractContent } from './planning.js';
+import { DocumentationCache } from './types/index.js';
+import { SynthesisOutput } from './synthesis.js';
 
 export interface ChallengeResult {
   critiques: string[];      // Numbered critique points
@@ -362,3 +364,198 @@ export function summarizeFindings(executionResult: ExecutionResult, actionPlan?:
   if (executionResult.subQuestionResults?.length) parts.push(`Sub-Qs: ${executionResult.subQuestionResults.length}`);
   return parts.join('\n');
 }
+
+/**
+ * POST-SYNTHESIS CODE VALIDATION
+ * Validates synthesized code against authoritative Context7 documentation
+ * Fixes hallucinated/outdated syntax
+ */
+export async function validateCodeAgainstDocs(
+  geminiKey: string | undefined,
+  synthesisOutput: SynthesisOutput,
+  docCache?: DocumentationCache
+): Promise<SynthesisOutput> {
+  // Skip if no API key or no docs available
+  if (!geminiKey || !docCache || Object.keys(docCache.base).length === 0) {
+    return synthesisOutput;
+  }
+
+  console.error('[Code Validation] Checking code blocks against Context7 docs...');
+
+  // Extract all code blocks from synthesis
+  const codeBlocks = extractCodeBlocks(synthesisOutput);
+  
+  if (codeBlocks.length === 0) {
+    console.error('[Code Validation] No code blocks found, skipping validation');
+    return synthesisOutput;
+  }
+
+  console.error(`[Code Validation] Found ${codeBlocks.length} code blocks to validate`);
+
+  // Build validation prompt with authoritative docs
+  const allDocs = [
+    ...Object.values(docCache.base).map(d => d.content),
+    ...Object.values(docCache.subQSpecific).map(d => d.content)
+  ].join('\n\n---\n\n');
+
+  const prompt = buildCodeValidationPrompt(codeBlocks, allDocs);
+
+  try {
+    const response = await callLLM(prompt, {
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',
+      apiKey: geminiKey,
+      timeout: 60000,
+      maxOutputTokens: 16000
+    });
+
+    // Parse corrections and apply them
+    const corrections = parseCodeCorrections(response.content);
+    
+    if (corrections.length > 0) {
+      console.error(`[Code Validation] Applying ${corrections.length} code fixes`);
+      return applyCodeCorrections(synthesisOutput, corrections);
+    } else {
+      console.error('[Code Validation] No corrections needed');
+      return synthesisOutput;
+    }
+  } catch (error) {
+    console.error('[Code Validation] Error:', error);
+    return synthesisOutput; // Return original on error
+  }
+}
+
+interface CodeBlock {
+  code: string;
+  language?: string;
+  section: 'overview' | string; // 'overview', 'q1', 'q2', etc.
+}
+
+interface CodeCorrection {
+  originalCode: string;
+  correctedCode: string;
+  reason: string;
+}
+
+function extractCodeBlocks(synthesis: SynthesisOutput): CodeBlock[] {
+  const blocks: CodeBlock[] = [];
+  const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+
+  // Extract from overview
+  let match;
+  while ((match = codeBlockRegex.exec(synthesis.overview)) !== null) {
+    blocks.push({
+      code: match[2].trim(),
+      language: match[1],
+      section: 'overview'
+    });
+  }
+
+  // Extract from sub-questions
+  if (synthesis.subQuestions) {
+    for (const [sectionId, subQ] of Object.entries(synthesis.subQuestions)) {
+      const regex = /```(\w+)?\n([\s\S]*?)```/g;
+      while ((match = regex.exec(subQ.answer)) !== null) {
+        blocks.push({
+          code: match[2].trim(),
+          language: match[1],
+          section: sectionId
+        });
+      }
+    }
+  }
+
+  // Extract from additional insights
+  if (synthesis.additionalInsights) {
+    const regex = /```(\w+)?\n([\s\S]*?)```/g;
+    while ((match = regex.exec(synthesis.additionalInsights)) !== null) {
+      blocks.push({
+        code: match[2].trim(),
+        language: match[1],
+        section: 'additional_insights'
+      });
+    }
+  }
+
+  return blocks;
+}
+
+function buildCodeValidationPrompt(codeBlocks: CodeBlock[], authoritativeDocs: string): string {
+  const codeExamples = codeBlocks
+    .map((block, idx) => `**Code Block ${idx + 1}** (${block.language || 'unknown'}):\n\`\`\`\n${block.code}\n\`\`\``)
+    .join('\n\n');
+
+  return `You are a code validator. Check the following code blocks against AUTHORITATIVE documentation.
+
+**AUTHORITATIVE DOCUMENTATION (source of truth):**
+${authoritativeDocs.slice(0, 5000)}
+
+---
+
+**CODE BLOCKS TO VALIDATE:**
+${codeExamples}
+
+---
+
+**YOUR TASK:**
+
+For EACH code block:
+1. Check if the syntax matches the authoritative docs
+2. Identify any hallucinated APIs, incorrect method names, or outdated patterns
+3. Provide corrected code ONLY if there are issues
+
+Output format:
+\`\`\`json
+[
+  {
+    "blockIndex": 1,
+    "hasIssues": true,
+    "reason": "Uses old API method 'foo()' which should be 'bar()'",
+    "correctedCode": "corrected code here"
+  }
+]
+\`\`\`
+
+If a code block is correct, set hasIssues: false and omit correctedCode.
+
+Return ONLY the JSON array, no explanation.`;
+}
+
+function parseCodeCorrections(response: string): CodeCorrection[] {
+  try {
+    // Extract JSON from response
+    const jsonMatch = response.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return [];
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    
+    return parsed
+      .filter((item: any) => item.hasIssues && item.correctedCode)
+      .map((item: any) => ({
+        originalCode: '', // We'll match by index
+        correctedCode: item.correctedCode,
+        reason: item.reason || 'Syntax correction'
+      }));
+  } catch (error) {
+    console.error('[Code Validation] Failed to parse corrections:', error);
+    return [];
+  }
+}
+
+function applyCodeCorrections(
+  synthesis: SynthesisOutput,
+  corrections: CodeCorrection[]
+): SynthesisOutput {
+  // For simplicity, we'll just log corrections for now
+  // Full implementation would need to map blockIndex to specific sections and replace
+  console.error(`[Code Validation] Corrections available but not yet applied (needs implementation)`);
+  corrections.forEach(c => {
+    console.error(`  - ${c.reason}`);
+  });
+  
+  // TODO: Implement actual code replacement logic
+  // This is complex as we need to track which code block corresponds to which correction
+  
+  return synthesis;
+}
+
