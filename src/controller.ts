@@ -14,6 +14,7 @@ import { synthesizeFindings, SynthesisOutput } from './synthesis.js';
 import { runChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, ChallengeResult, SufficiencyVote } from './validation.js';
 import { formatMarkdown, ResearchResult } from './formatting.js';
 import { generateSectionSummaries } from './sectioning.js';
+import { compressText } from './clients/llm.js';
 
 export interface ResearchOptions {
   subQuestions?: string[];
@@ -181,7 +182,7 @@ export class ResearchController {
     const executiveSummary: ExecutiveSummary = {
       queryAnswered: sufficiency?.sufficient ?? true,
       confidence: this.determineConfidence(complexity, sufficiency),
-      keyRecommendation: this.extractKeyRecommendation(synthesisOutput.overview),
+      keyRecommendation: await this.extractKeyRecommendation(synthesisOutput.overview, this.env.GEMINI_API_KEY),
       budgetFeasibility: this.extractBudgetFeasibility(enrichedContext, synthesisOutput.overview),
       availableSections: Object.keys(sections),
     };
@@ -352,20 +353,18 @@ export class ResearchController {
   }
 
   /**
-   * Extract key recommendation (first 1-2 sentences from synthesis)
+   * Extract key recommendation using LLM-based summarization (~50 words / ~200 chars)
    */
-  private extractKeyRecommendation(synthesis: string): string {
-    const sentences = synthesis
-      .split(/[.!?]+/)
-      .map(s => s.trim())
-      .filter(s => s.length > 20);
+  private async extractKeyRecommendation(synthesis: string, apiKey?: string): Promise<string> {
+    if (!apiKey || synthesis.length < 200) {
+      // Fallback: return as-is if short or no API key
+      return synthesis.length > 200 
+        ? synthesis.slice(0, 200).trim() + '...' 
+        : synthesis;
+    }
     
-    if (sentences.length === 0) return 'See full report for recommendations.';
-    
-    const recommendation = sentences.slice(0, 2).join('. ') + '.';
-    return recommendation.length > 200 
-      ? recommendation.substring(0, 197) + '...'
-      : recommendation;
+    // LLM-based summarization (~50 words = ~200 chars)
+    return await compressText(synthesis, 50, apiKey);
   }
 
   /**
