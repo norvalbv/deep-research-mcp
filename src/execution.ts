@@ -80,16 +80,11 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
 
   if (shouldRunArxiv) {
     gatheringTasks.push((async () => {
-      console.error('[Exec] → arXiv search (unified for main + sub-Qs)...');
+      console.error('[Exec] → arXiv search with relevance filtering...');
       
-      // Build combined query for arxiv: main query + sub-questions
-      const allQueries = [query, ...(options?.subQuestions || [])];
-      const combinedQuery = allQueries.join(' ');
-      
-      console.error(`[Exec]   Planning papers for: main + ${options?.subQuestions?.length || 0} sub-Qs`);
-      
-      // Fetch UP TO 5 papers total (not per query)
-      const arxivResult = await arxivSearch(combinedQuery, 5);
+      // Use main query only (not combined with sub-questions to reduce noise)
+      // Pass API key for keyword extraction and validation
+      const arxivResult = await arxivSearch(query, 5, 3, env?.GEMINI_API_KEY);
       
       // Summarize papers once
       if (arxivResult.papers.length > 0 && env?.GEMINI_API_KEY) {
@@ -97,7 +92,7 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
         result.arxivPapers = { ...arxivResult, papers: summarizedPapers };
         
         // Papers are now available for all sections (main + sub-Qs)
-        console.error(`[Exec]   ${summarizedPapers.length} papers summarized (shared across all queries)`);
+        console.error(`[Exec]   ${summarizedPapers.length} relevant papers found`);
       } else {
         result.arxivPapers = arxivResult;
       }

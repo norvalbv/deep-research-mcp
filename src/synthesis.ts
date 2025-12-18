@@ -179,8 +179,10 @@ Sources: ${execution.perplexityResult.sources?.join(', ') || 'Not available'}
     const paperSummaries = execution.arxivPapers.papers
       .map(p => `- **${p.title}** [arxiv:${p.id}]: ${p.summary}`)
       .join('\n');
-    sections.push(`**Academic Papers${mainQueryOnly ? '' : ' Found'} [arxiv]:**
+    sections.push(`**Academic Papers${mainQueryOnly ? '' : ' Found'} [arxiv] - CITE ONLY THESE IDs:**
 ${paperSummaries}
+
+**CRITICAL: Only cite the arxiv IDs listed above. Do NOT invent or hallucinate other arxiv IDs.**
 `);
   }
 
@@ -537,8 +539,10 @@ ${subQData.perplexityResult.content.slice(0, 2000)}
     const paperSummaries = arxivPapers.papers
       .map(p => `- **${p.title}** [arxiv:${p.id}]: ${p.summary}`)
       .join('\n');
-    sections.push(`**Academic Papers [arxiv]:**
+    sections.push(`**Academic Papers [arxiv] - CITE ONLY THESE IDs:**
 ${paperSummaries}
+
+**CRITICAL: Only cite the arxiv IDs listed above. Do NOT invent or hallucinate other arxiv IDs.**
 `);
   }
 

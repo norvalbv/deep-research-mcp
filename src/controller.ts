@@ -427,7 +427,7 @@ export class ResearchController {
     // If gaps mention papers/research/academic, fetch more papers
     if ((gapText.includes('paper') || gapText.includes('research') || gapText.includes('academic')) && !execution.arxivPapers) {
       console.error('[Research] Fetching papers for gap...');
-      execution.arxivPapers = await arxivSearch(query, 5);
+      execution.arxivPapers = await arxivSearch(query, 5, 3, this.env.GEMINI_API_KEY);
     }
     
     // If gaps mention code/implementation/example, fetch library docs
