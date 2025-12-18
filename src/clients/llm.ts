@@ -216,11 +216,11 @@ export function getVotingConfigs(geminiKey?: string): LLMConfig[] {
   // 5x Gemini Flash for consistent, fast voting
   // Using same model multiple times still provides diversity through temperature
   return [
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key },
+    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
+    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
+    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
+    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
+    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
   ];
 }
 
@@ -241,7 +241,7 @@ export const compressText = async (text: string, maxWords: number, geminiKey?: s
   // Summarize text to be approximately maxWords words
   const summary = await callLLM(
     `Summarize the following text to be approximately ${maxWords} words. Focus on the most important information and insights. Be concise but preserve key details.\n\nText to summarize:\n${text}`, 
-    { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: key }
+    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key }
   );
   
   return summary.content;

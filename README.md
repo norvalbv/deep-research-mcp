@@ -470,7 +470,7 @@ provide sufficient statistical power for small effect detection [arxiv:2024.6789
 **Status**: ✅ Response is sufficient
 
 **Model Feedback**:
-- ✅ **gemini-2.5-flash**: Response comprehensively addresses the query with actionable steps
+- ✅ **gemini-3-flash-preview**: Response comprehensively addresses the query with actionable steps
 - ✅ **gpt-5-mini-2025-08-07**: Good coverage of edge cases and validation methods
 - ❌ **claude-3.5-haiku**: Could benefit from more code examples
 

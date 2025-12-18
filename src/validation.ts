@@ -45,7 +45,7 @@ export async function runChallenge(
   const prompt = buildChallengePrompt(query, synthesis, context);
   const response = await callLLM(prompt, {
     provider: 'gemini',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-flash-preview',
     apiKey: geminiKey
   });
   
@@ -222,7 +222,7 @@ Provide a 2-3 paragraph consensus evaluation focusing on reliability and actiona
 
   const response = await callLLM(prompt, {
     provider: 'gemini',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-flash-preview',
     apiKey: geminiKey
   });
   return extractContent(response.content);
@@ -424,7 +424,7 @@ export async function validateCodeAgainstDocs(
   try {
     const response = await callLLM(prompt, {
       provider: 'gemini',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       apiKey: geminiKey,
       timeout: 60000,
       maxOutputTokens: 16000

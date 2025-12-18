@@ -31,7 +31,7 @@ export async function selectBestPlan(
   try {
     const response = await callLLM(judgePrompt, {
       provider: 'gemini',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       apiKey: geminiKey
     });
     const selectedIndex = parseJudgeResponse(response.content, proposals.length);

@@ -62,7 +62,7 @@ export async function synthesizeFindings(
   try {
     const response = await callLLM(prompt, {
       provider: 'gemini',
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       apiKey: geminiKey,
       timeout: 120000,
       maxOutputTokens: 32000,
@@ -414,7 +414,7 @@ async function synthesizePhased(
   const mainPrompt = buildSynthesisPrompt(query, enrichedContext, execution, options, true);
   const mainResponse = await callLLM(mainPrompt, {
     provider: 'gemini',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-flash-preview',
     apiKey: geminiKey,
     timeout: 60000,
     maxOutputTokens: 16000,
@@ -491,7 +491,7 @@ Keep it under 500 words, be specific.`;
 
   const response = await callLLM(prompt, {
     provider: 'gemini',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-flash-preview',
     apiKey: geminiKey,
     timeout: 30000,
     maxOutputTokens: 2000
@@ -567,7 +567,7 @@ Don't artificially limit your response length.`);
 
   const response = await callLLM(sections.join('\n'), {
     provider: 'gemini',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-flash-preview',
     apiKey: geminiKey,
     timeout: 60000,
     maxOutputTokens: 8000,
