@@ -211,10 +211,6 @@ export async function runConsensusValidation(
     ? `\n\n**Web Sources:**\n${executionResult.perplexityResult.sources.map((s, i) => `${i + 1}. ${s}`).join('\n')}`
     : '';
 
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:runConsensusValidation',message:'H3/H4: Consensus validation data',data:{hasArxivPapers:!!executionResult.arxivPapers?.papers?.length,paperCount:executionResult.arxivPapers?.papers?.length||0,paperTitles:executionResult.arxivPapers?.papers?.slice(0,3).map(p=>p.title)||[],hasPerplexity:!!executionResult.perplexityResult?.content,sourceCount:executionResult.perplexityResult?.sources?.length||0},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3,H4'})}).catch(()=>{});
-  // #endregion
-
   const libraryDocs = executionResult.libraryDocs
     ? `**Library Documentation (Context7):**\n${executionResult.libraryDocs.slice(0, 2000)}`
     : 'No library documentation';
@@ -389,24 +385,13 @@ function parseVoteResponse(
     const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
     const contentToSearch = codeBlockMatch ? codeBlockMatch[1] : response;
     
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse',message:'H-A/H-E: Vote response parsing',data:{model,rawResponseLength:response.length,usedCodeBlock:!!codeBlockMatch,contentToSearchLength:contentToSearch.length,contentPreview:contentToSearch.slice(0,300)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-A,H-E'})}).catch(()=>{});
-    // #endregion
-    
     const jsonMatch = contentToSearch.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse:noJSON',message:'H-A: No JSON found in response',data:{model,contentToSearch:contentToSearch.slice(0,500)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-A'})}).catch(()=>{});
-      // #endregion
       throw new Error('No JSON found');
     }
     
     const parsed = JSON.parse(jsonMatch[0]);
     const vote = parsed.vote === 'critique_wins' ? 'critique_wins' : 'synthesis_wins';
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse:success',message:'H-A: Parse succeeded',data:{model,vote,reasoning:parsed.reasoning?.slice(0,100)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-A'})}).catch(()=>{});
-    // #endregion
     
     return {
       model,
@@ -415,9 +400,6 @@ function parseVoteResponse(
       criticalGaps: Array.isArray(parsed.critical_gaps) ? parsed.critical_gaps : [],
     };
   } catch (error) {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse:catch',message:'H-A: Parse error',data:{model,error:String(error),responsePreview:response.slice(0,500)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-A'})}).catch(()=>{});
-    // #endregion
     // Default to synthesis_wins on parse failure
     return { 
       model, 
@@ -496,6 +478,23 @@ export async function runPVRVerification(
   result.isConsistent = nliResult.score >= PVR_CONFIG.ENTAILMENT_THRESHOLD;
   result.contradictions = nliResult.contradictions;
   
+  // Run dedicated logic consistency check (AND/OR operators)
+  const logicResult = await checkLogicConsistency(sectionClaims, geminiKey);
+  if (logicResult.hasConflict) {
+    console.error(`[PVR] Logic conflict detected: ${logicResult.conflicts.length} issues`);
+    result.isConsistent = false;
+    // Add logic conflicts as high-severity contradictions
+    for (const conflict of logicResult.conflicts) {
+      result.contradictions.push({
+        sectionA: 'overview',
+        sectionB: 'sub-question',
+        claimA: conflict,
+        claimB: 'Logic operator mismatch',
+        severity: 'high',
+      });
+    }
+  }
+  
   // Identify sections that need re-rolling
   if (!result.isConsistent) {
     const contradictingSections = new Set<string>();
@@ -525,10 +524,6 @@ async function extractClaimsFromSections(
 ): Promise<Record<string, string[]>> {
   const claims: Record<string, string[]> = {};
   
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:extractClaimsFromSections:start',message:'H-D: Synthesis structure check',data:{hasOverview:!!synthesis.overview,overviewLength:synthesis.overview?.length||0,subQuestionsCount:synthesis.subQuestions?Object.keys(synthesis.subQuestions).length:0,subQuestionKeys:synthesis.subQuestions?Object.keys(synthesis.subQuestions):[]},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-D'})}).catch(()=>{});
-  // #endregion
-  
   const extractionPrompt = (sectionName: string, content: string) => `Extract ATOMIC CLAIMS from this text section.
 
 Section: ${sectionName}
@@ -538,16 +533,26 @@ ${content.slice(0, 2000)}
 ---
 
 Extract discrete, verifiable claims. Focus on:
-1. Numeric values and thresholds
-2. Recommendations and conclusions
-3. Technical specifications
-4. Time/cost estimates
+1. Numeric values and thresholds (e.g., ">0.80", ">=3", "20 hours")
+2. **LOGICAL OPERATORS** - Capture AND/OR/both/either explicitly:
+   - "Entity promoted if X OR Y" (OR logic)
+   - "Must pass both X AND Y" (AND logic)
+   - "Either condition triggers..." (OR logic)
+   - "All gates required" (AND logic)
+3. Conditional relationships (if X then Y, when X occurs)
+4. Requirements and gates (must, required, mandatory)
+5. Time/cost estimates
+
+**PRESERVE LOGIC OPERATORS in claims:**
+- GOOD: "Entity promoted if recurrence >= 3 OR salience > 0.80"
+- GOOD: "Both gates must be passed for promotion"
+- BAD: "Entity is promoted based on recurrence and salience" (ambiguous)
 
 Return JSON only:
 {
   "claims": [
-    "claim 1 as a single fact",
-    "claim 2 as a single fact"
+    "claim preserving exact logic operator",
+    "another claim with AND/OR if present"
   ]
 }
 
@@ -585,10 +590,6 @@ Keep claims concise (under 100 chars each). Max 10 claims.`;
       claims[key] = sectionClaims;
     }
   }
-
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:extractClaimsFromSections:complete',message:'H-D: Claims extraction complete',data:{sectionCount:Object.keys(claims).length,sections:Object.keys(claims),claimsPerSection:Object.fromEntries(Object.entries(claims).map(([k,v])=>[k,v.length]))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-D'})}).catch(()=>{});
-  // #endregion
 
   return claims;
 }
@@ -702,6 +703,71 @@ severity: "high" = different numbers, "medium" = different approaches, "low" = m
 }
 
 /**
+ * Dedicated logic consistency check for AND/OR operators
+ * Specifically looks for conflicting logic gates across sections
+ */
+async function checkLogicConsistency(
+  sectionClaims: Record<string, string[]>,
+  geminiKey: string
+): Promise<{ hasConflict: boolean; conflicts: string[] }> {
+  const allClaims = Object.entries(sectionClaims)
+    .flatMap(([section, claims]) => claims.map(c => ({ section, claim: c })));
+  
+  if (allClaims.length < 2) {
+    return { hasConflict: false, conflicts: [] };
+  }
+
+  const claimsList = allClaims
+    .map((c, i) => `[${i + 1}] (${c.section}) ${c.claim}`)
+    .join('\n');
+
+  const logicCheckPrompt = `You are checking for LOGIC OPERATOR CONFLICTS (AND vs OR).
+
+Claims to check:
+${claimsList}
+
+---
+
+Find claims that use CONFLICTING logic operators for the SAME condition/threshold:
+
+CONFLICT EXAMPLES:
+- Claim A: "Entity promoted if X OR Y" vs Claim B: "Must pass both X AND Y"
+- Claim A: "Either condition triggers" vs Claim B: "All gates required"
+- Claim A: "recurrence >= 3 OR salience > 0.80" vs Claim B: "must pass two primary gates"
+
+NOT A CONFLICT:
+- Different thresholds (0.80 vs 0.85) - that's a numeric difference, not logic
+- Same logic with different wording ("X or Y" and "X OR Y")
+
+Return JSON only:
+{
+  "hasConflict": true/false,
+  "conflicts": [
+    "Overview says 'X OR Y' but Q4 implies 'X AND Y' with 'must pass both'"
+  ]
+}
+
+Return empty conflicts array if no AND/OR logic conflicts found.`;
+
+  try {
+    const response = await callLLMWithTimeout(logicCheckPrompt, geminiKey, PVR_CONFIG.VERIFICATION_TIMEOUT_MS);
+    
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        hasConflict: parsed.hasConflict === true,
+        conflicts: Array.isArray(parsed.conflicts) ? parsed.conflicts : [],
+      };
+    }
+  } catch (error) {
+    console.error('[PVR] Logic check failed:', error);
+  }
+  
+  return { hasConflict: false, conflicts: [] };
+}
+
+/**
  * Helper: Call LLM with timeout (returns content or throws)
  */
 async function callLLMWithTimeout(
@@ -709,10 +775,6 @@ async function callLLMWithTimeout(
   geminiKey: string,
   timeoutMs: number
 ): Promise<string> {
-  // #region agent log
-  const startTime = Date.now();
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:callLLMWithTimeout:start',message:'H-B/H-C: LLM call starting',data:{timeoutMs,promptLength:prompt.length,promptPreview:prompt.slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-B,H-C'})}).catch(()=>{});
-  // #endregion
   try {
     const response = await callLLM(prompt, {
       provider: 'gemini',
@@ -721,14 +783,8 @@ async function callLLMWithTimeout(
       timeout: timeoutMs,
       maxOutputTokens: 2000,
     });
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:callLLMWithTimeout:success',message:'H-B/H-C: LLM call succeeded',data:{durationMs:Date.now()-startTime,responseLength:response.content.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-B,H-C'})}).catch(()=>{});
-    // #endregion
     return response.content;
   } catch (error) {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:callLLMWithTimeout:error',message:'H-B/H-C: LLM call failed',data:{durationMs:Date.now()-startTime,timeoutMs,error:String(error)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-B,H-C'})}).catch(()=>{});
-    // #endregion
     throw error;
   }
 }

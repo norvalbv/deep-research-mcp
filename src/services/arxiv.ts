@@ -57,9 +57,6 @@ async function extractArxivKeywords(query: string, apiKey: string): Promise<stri
       }
     );
     const keywords = response.content.split(',').map(k => k.trim()).filter(k => k.length > 0);
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'arxiv.ts:extractArxivKeywords',message:'H1: Keywords extracted',data:{query,rawResponse:response.content,keywords},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion
     return keywords;
   } catch (error) {
     console.error('[arXiv] Keyword extraction failed, using raw query:', error);
@@ -80,9 +77,6 @@ function buildArxivQuery(keywords: string[]): string {
   
   // Exclude physics papers
   const finalQuery = `(${kwQuery}) AND (${catQuery}) ANDNOT cat:physics.*`;
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'arxiv.ts:buildArxivQuery',message:'H2: Built query syntax',data:{keywords,kwQuery,catQuery,finalQuery},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
-  // #endregion
   return finalQuery;
 }
 
@@ -175,9 +169,6 @@ export async function arxivSearch(
       
       // Parse XML response (simple parsing for key fields)
       let papers = parseArxivXML(xmlText);
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'arxiv.ts:arxivSearch:initialParse',message:'H2/H3: Initial search results',data:{url,papersFound:papers.length,paperTitles:papers.slice(0,3).map(p=>p.title)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2,H3'})}).catch(()=>{});
-      // #endregion
 
       console.error(`[arXiv] Found ${papers.length} papers from search`);
       
@@ -185,16 +176,10 @@ export async function arxivSearch(
       const papersBeforeValidation = papers.length;
       if (apiKey && papers.length > 0) {
         papers = await validatePaperRelevance(papers, query, apiKey);
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'arxiv.ts:arxivSearch:afterValidation',message:'H5: After LLM validation',data:{before:papersBeforeValidation,after:papers.length,retained:papers.map(p=>p.title)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
-        // #endregion
       }
       
       // Fallback: if optimized search returns 0 results, try broader search
       if (papers.length === 0 && apiKey) {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'arxiv.ts:arxivSearch:fallbackTriggered',message:'H4: Fallback triggered',data:{reason:'0 papers after initial search/validation'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
-        // #endregion
         console.error('[arXiv] No results with strict filtering, trying broader search...');
         const broaderQuery = `(all:${query}) AND (${CS_CATEGORIES.map(c => `cat:${c}`).join(' OR ')}) ANDNOT cat:physics.*`;
         const broaderUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(broaderQuery)}&start=0&max_results=${maxResults}&sortBy=relevance&sortOrder=descending`;
@@ -205,9 +190,6 @@ export async function arxivSearch(
         if (broaderResponse.ok) {
           const broaderXml = await broaderResponse.text();
           papers = parseArxivXML(broaderXml);
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'arxiv.ts:arxivSearch:fallbackResults',message:'H4: Fallback search results',data:{broaderQuery,papersFound:papers.length,paperTitles:papers.slice(0,3).map(p=>p.title)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
-          // #endregion
           console.error(`[arXiv] Broader search found ${papers.length} papers`);
           
           if (papers.length > 0) {
@@ -216,9 +198,6 @@ export async function arxivSearch(
         }
       }
 
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'arxiv.ts:arxivSearch:finalReturn',message:'Final result',data:{totalPapers:papers.length,paperTitles:papers.map(p=>p.title)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'ALL'})}).catch(()=>{});
-      // #endregion
       return {
         papers,
         totalResults: papers.length,

@@ -171,10 +171,6 @@ def process_data(data):
 `);
 
   if (execution.perplexityResult?.content) {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis.ts:buildSynthesisPrompt:perplexity',message:'H1/H2: Perplexity data for synthesis',data:{hasContent:!!execution.perplexityResult.content,contentLength:execution.perplexityResult.content.length,sources:execution.perplexityResult.sources||[],sourcesCount:execution.perplexityResult.sources?.length||0},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1,H2'})}).catch(()=>{});
-    // #endregion
-    
     // Format sources with numbered references for easier citation
     const sourcesFormatted = execution.perplexityResult.sources?.length
       ? execution.perplexityResult.sources.map((url, i) => `[${i + 1}] ${url}`).join('\n')
@@ -275,11 +271,21 @@ Write a comprehensive answer to the main query. Be thorough and detailed.
 - Time estimates across sections ADD UP (e.g., if 3 phases of 10hrs each, total should be 30hrs)
 - All numeric thresholds are consistent (don't say ">90%" in one place and ">85%" elsewhere for same metric)
 
+**LOGIC GATE CONSISTENCY** - Critical for multi-condition rules:
+- If you define a threshold with OR logic (e.g., "X OR Y"), use OR consistently everywhere
+- If you define a threshold with AND logic (e.g., "X AND Y"), use AND consistently everywhere
+- Code examples MUST match prose logic (if prose says "must pass both", code must use AND not OR)
+- Use EXPLICIT operators: write "X OR Y" not "either X or Y" (ambiguous)
+- BAD: Overview says "OR" but sub-question implies "AND" with "must pass both gates"
+- GOOD: All sections consistently use "X >= 3 OR score > 0.80" with matching code
+
 **SELF-CHECK:**
 - [ ] All thresholds are numeric with units
 - [ ] No contradictions in your response
 - [ ] Time estimates add up correctly
 - [ ] Every recommendation has ONE clear answer (not "maybe A or B")
+- [ ] Logic operators (AND/OR) are consistent across all sections
+- [ ] Code logic matches prose logic
 `);
   } else {
     // Build section format instructions for full synthesis
@@ -348,11 +354,21 @@ ${subQuestionSections}
 - If main says "use approach A" and sub-question says "avoid A", reconcile with ONE clear recommendation
 - All numeric thresholds are consistent (don't say ">90%" in one place and ">85%" elsewhere for same metric)
 
+**LOGIC GATE CONSISTENCY** - Critical for multi-condition rules:
+- If you define a threshold with OR logic (e.g., "X OR Y"), use OR consistently in ALL sections
+- If you define a threshold with AND logic (e.g., "X AND Y"), use AND consistently in ALL sections
+- Code examples MUST match prose logic (if prose says "must pass both", code must use AND not OR)
+- Use EXPLICIT operators: write "X OR Y" not "either X or Y" (ambiguous)
+- BAD: Overview says "OR" but sub-question implies "AND" with "must pass both gates"
+- GOOD: All sections consistently use "X >= 3 OR score > 0.80" with matching code
+
 **SELF-CHECK:**
 - [ ] All thresholds are numeric with units
 - [ ] No contradictions between sections
 - [ ] Time estimates add up correctly
 - [ ] Every recommendation has ONE clear answer (not "maybe A or B")
+- [ ] Logic operators (AND/OR) are consistent across ALL sections
+- [ ] Code logic matches prose logic in every section
 `);
   }
 
@@ -581,6 +597,13 @@ Answer the sub-question thoroughly. Ensure your answer:
 - Includes code examples if relevant
 - Leverages academic papers if relevant to this specific question
 - Is comprehensive and detailed
+
+**LOGIC CONSISTENCY (Critical):**
+- If the key findings above use OR logic (e.g., "X OR Y"), you MUST use OR in your answer
+- If the key findings above use AND logic (e.g., "X AND Y"), you MUST use AND in your answer
+- Code examples MUST match the logic operators used in prose
+- Do NOT write "must pass both gates" if the main finding uses OR logic
+- Use EXPLICIT operators: "X OR Y" not "either X or Y"
 
 Don't artificially limit your response length.`);
 
