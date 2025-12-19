@@ -1,10 +1,13 @@
 /**
  * Synthesis Phase - Combines all gathered data into a unified, context-aware answer
+ * 
+ * Implements Global Constraint Manifest for consistency (arxiv:2310.03025)
  */
 
 import { callLLM } from './clients/llm.js';
 import { ExecutionResult } from './execution.js';
 import { extractContent } from './planning.js';
+import { GlobalManifest } from './types/index.js';
 
 export interface SynthesisOptions {
   subQuestions?: string[];
@@ -168,10 +171,22 @@ def process_data(data):
 `);
 
   if (execution.perplexityResult?.content) {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis.ts:buildSynthesisPrompt:perplexity',message:'H1/H2: Perplexity data for synthesis',data:{hasContent:!!execution.perplexityResult.content,contentLength:execution.perplexityResult.content.length,sources:execution.perplexityResult.sources||[],sourcesCount:execution.perplexityResult.sources?.length||0},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1,H2'})}).catch(()=>{});
+    // #endregion
+    
+    // Format sources with numbered references for easier citation
+    const sourcesFormatted = execution.perplexityResult.sources?.length
+      ? execution.perplexityResult.sources.map((url, i) => `[${i + 1}] ${url}`).join('\n')
+      : 'Not available';
+    
     sections.push(`**Web Search${mainQueryOnly ? '' : ' Results'} [perplexity]:**
 ${execution.perplexityResult.content.slice(0, 3000)}
 
-Sources: ${execution.perplexityResult.sources?.join(', ') || 'Not available'}
+**Sources (cite as [perplexity:N] where N is the source number):**
+${sourcesFormatted}
+
+**CITATION FORMAT:** When citing web findings, use [perplexity:1], [perplexity:2], etc. based on the source numbers above.
 `);
   }
 
@@ -603,4 +618,155 @@ function buildFallbackSynthesis(execution: ExecutionResult): SynthesisOutput {
     overview: parts.join('\n\n') || 'No synthesis available - GEMINI_API_KEY not provided.',
     additionalInsights: 'This is a fallback response due to missing API key.'
   };
+}
+
+/**
+ * Extract Global Constraint Manifest from sources BEFORE synthesis
+ * This ensures all parallel synthesis calls share consistent facts
+ * 
+ * Based on arxiv:2310.03025 (PVR architecture)
+ * 
+ * @param execution - Research execution results containing source data
+ * @param geminiKey - API key for LLM extraction
+ * @returns GlobalManifest with key facts, numerics, and sources
+ */
+export async function extractGlobalManifest(
+  execution: ExecutionResult,
+  geminiKey: string | undefined
+): Promise<GlobalManifest> {
+  const manifest: GlobalManifest = {
+    keyFacts: [],
+    numerics: {},
+    sources: [],
+    extractedAt: Date.now(),
+  };
+
+  // Collect source citations
+  if (execution.arxivPapers?.papers?.length) {
+    manifest.sources.push(...execution.arxivPapers.papers.map(p => `arxiv:${p.id}`));
+  }
+  if (execution.perplexityResult?.sources?.length) {
+    manifest.sources.push(...execution.perplexityResult.sources.map((s, i) => `perplexity:${i + 1}`));
+  }
+
+  // If no API key, return basic manifest with sources only
+  if (!geminiKey) {
+    return manifest;
+  }
+
+  // Build source content for extraction
+  const sourceContent: string[] = [];
+
+  if (execution.arxivPapers?.papers?.length) {
+    const paperContent = execution.arxivPapers.papers
+      .map(p => `[arxiv:${p.id}] ${p.title}: ${p.summary}`)
+      .join('\n');
+    sourceContent.push(`Academic Papers:\n${paperContent}`);
+  }
+
+  if (execution.perplexityResult?.content) {
+    sourceContent.push(`Web Research:\n${execution.perplexityResult.content.slice(0, 2000)}`);
+  }
+
+  if (execution.libraryDocs) {
+    sourceContent.push(`Library Documentation:\n${execution.libraryDocs.slice(0, 1500)}`);
+  }
+
+  if (sourceContent.length === 0) {
+    return manifest;
+  }
+
+  // Extract key facts and numerics using LLM
+  const extractionPrompt = `Extract KEY FACTS and NUMERIC VALUES from these research sources.
+
+SOURCE DATA:
+${sourceContent.join('\n\n---\n\n')}
+
+---
+
+YOUR TASK:
+Extract facts that MUST be consistent across all synthesis sections.
+
+Focus on:
+1. Numeric thresholds with citations (e.g., "accuracy threshold: 0.85 [arxiv:2310.03025]")
+2. Technical specifications with units
+3. Named approaches or methods
+4. Critical constraints or requirements
+
+Return JSON only:
+{
+  "keyFacts": [
+    "fact with [source:id] citation",
+    "another fact with [source:id]"
+  ],
+  "numerics": {
+    "thresholdName": 0.85,
+    "timeoutSeconds": 5
+  }
+}
+
+Return ONLY verifiable facts from the sources. Do NOT invent or hallucinate values.
+If no numeric values found, return empty object for numerics.`;
+
+  try {
+    const response = await callLLM(extractionPrompt, {
+      provider: 'gemini',
+      model: 'gemini-3-flash-preview',
+      apiKey: geminiKey,
+      timeout: 15000,
+      maxOutputTokens: 2000,
+    });
+
+    // Parse JSON response
+    const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      
+      if (Array.isArray(parsed.keyFacts)) {
+        manifest.keyFacts = parsed.keyFacts;
+      }
+      
+      if (typeof parsed.numerics === 'object' && parsed.numerics !== null) {
+        manifest.numerics = parsed.numerics;
+      }
+    }
+
+    console.error(`[Manifest] Extracted ${manifest.keyFacts.length} facts, ${Object.keys(manifest.numerics).length} numerics`);
+  } catch (error) {
+    console.error('[Manifest] Extraction failed, using empty manifest:', error);
+  }
+
+  return manifest;
+}
+
+/**
+ * Format manifest for injection into synthesis prompts
+ * Ensures all parallel synthesis calls see the same facts
+ */
+export function formatManifestForPrompt(manifest: GlobalManifest): string {
+  if (manifest.keyFacts.length === 0 && Object.keys(manifest.numerics).length === 0) {
+    return '';
+  }
+
+  const parts: string[] = [];
+  
+  parts.push('**GLOBAL CONSTRAINTS (must be consistent across all sections):**');
+  
+  if (manifest.keyFacts.length > 0) {
+    parts.push('\nKey Facts:');
+    manifest.keyFacts.forEach((fact, i) => {
+      parts.push(`${i + 1}. ${fact}`);
+    });
+  }
+  
+  if (Object.keys(manifest.numerics).length > 0) {
+    parts.push('\nNumeric Values:');
+    for (const [key, value] of Object.entries(manifest.numerics)) {
+      parts.push(`- ${key}: ${value}`);
+    }
+  }
+  
+  parts.push('\n**IMPORTANT**: Use EXACTLY these values. Do NOT contradict or vary them.\n');
+  
+  return parts.join('\n');
 }

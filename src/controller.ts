@@ -10,8 +10,9 @@ import { arxivSearch } from './services/arxiv.js';
 import { ComplexityLevel, Section, ExecutiveSummary } from './types/index.js';
 import { createFallbackPlan, generateConsensusPlan, ResearchActionPlan } from './planning.js';
 import { executeResearchPlan } from './execution.js';
-import { synthesizeFindings, SynthesisOutput } from './synthesis.js';
-import { runChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, ChallengeResult, SufficiencyVote } from './validation.js';
+import { synthesizeFindings, SynthesisOutput, extractGlobalManifest, formatManifestForPrompt } from './synthesis.js';
+import { runChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, runPVRVerification, getPVRConfig, ChallengeResult, SufficiencyVote } from './validation.js';
+import { GlobalManifest, PVRVerificationResult } from './types/index.js';
 import { formatMarkdown, ResearchResult } from './formatting.js';
 import { generateSectionSummaries } from './sectioning.js';
 import { compressText } from './clients/llm.js';
@@ -68,17 +69,54 @@ export class ResearchController {
       env: this.env,
     });
 
+    // Step 2.5: Extract Global Constraint Manifest from sources
+    // This ensures all synthesis calls share consistent facts (arxiv:2310.03025)
+    console.error('[Research] Extracting global constraint manifest from sources...');
+    const manifest = await extractGlobalManifest(execution, this.env.GEMINI_API_KEY);
+    
+    // Store manifest in execution for prompt injection
+    const manifestContext = formatManifestForPrompt(manifest);
+    const enrichedWithManifest = manifestContext 
+      ? `${enrichedContext || ''}\n\n${manifestContext}`
+      : enrichedContext;
+
     // Step 3: Synthesize findings into unified answer
     // Automatically uses phased synthesis if sub-questions exist (token-efficient)
     let synthesisOutput = await synthesizeFindings(
       this.env.GEMINI_API_KEY,
       query,
-      enrichedContext,
+      enrichedWithManifest,
       execution,
       options
     );
 
-    // Step 3.5: Code validation pass (if Context7 docs available)
+    // Step 3.5: PVR Verification - Check consistency across sections
+    let pvrResult: PVRVerificationResult | undefined;
+    if (options?.subQuestions?.length) {
+      console.error('[Research] Running PVR verification...');
+      pvrResult = await runPVRVerification(synthesisOutput, manifest, this.env.GEMINI_API_KEY);
+      
+      // Speculative re-rolling: Only re-synthesize contradicting sections
+      if (!pvrResult.isConsistent && pvrResult.sectionsToReroll.length > 0) {
+        console.error(`[Research] Re-rolling ${pvrResult.sectionsToReroll.length} contradicting sections...`);
+        synthesisOutput = await this.rerollContradictingSections(
+          synthesisOutput,
+          pvrResult,
+          manifest,
+          query,
+          enrichedWithManifest,
+          execution,
+          options
+        );
+        
+        // Re-verify after re-roll (max 1 iteration)
+        const reVerify = await runPVRVerification(synthesisOutput, manifest, this.env.GEMINI_API_KEY);
+        console.error(`[Research] Post-reroll PVR score: ${reVerify.entailmentScore.toFixed(2)}`);
+        pvrResult = reVerify;
+      }
+    }
+
+    // Step 3.6: Code validation pass (if Context7 docs available)
     if (execution.docCache && Object.keys(execution.docCache.base).length > 0) {
       synthesisOutput = await validateCodeAgainstDocs(
         this.env.GEMINI_API_KEY,
@@ -93,6 +131,11 @@ export class ResearchController {
       enrichedContext,
       constraints: options?.constraints,
       subQuestions: options?.subQuestions,
+      // Include valid sources so challenger knows which citations are legitimate
+      validSources: {
+        arxivPapers: execution.arxivPapers?.papers?.map(p => ({ id: p.id, title: p.title })),
+        perplexitySources: execution.perplexityResult?.sources,
+      },
     };
     
     // Convert structured output to text for challenge/consensus
@@ -411,6 +454,120 @@ export class ResearchController {
       execution,
       options
     );
+  }
+
+  /**
+   * Speculative re-rolling: Only re-synthesize sections that contain contradictions
+   * Based on arxiv:2310.03025 (PVR architecture)
+   * 
+   * Uses overview as "anchor" section - keeps it stable, re-rolls sub-questions
+   */
+  private async rerollContradictingSections(
+    synthesis: SynthesisOutput,
+    pvrResult: PVRVerificationResult,
+    manifest: GlobalManifest,
+    query: string,
+    enrichedContext: string | undefined,
+    execution: any,
+    options: ResearchOptions | undefined
+  ): Promise<SynthesisOutput> {
+    // Keep overview as anchor (source of truth)
+    const result: SynthesisOutput = {
+      overview: synthesis.overview,
+      subQuestions: { ...synthesis.subQuestions },
+      additionalInsights: synthesis.additionalInsights,
+    };
+
+    // Build contradiction context for re-rolling
+    const contradictionContext = pvrResult.contradictions
+      .filter(c => c.severity === 'high')
+      .map(c => `Contradiction: "${c.claimA}" vs "${c.claimB}"`)
+      .join('\n');
+
+    // Re-roll only the contradicting sub-questions
+    for (const sectionId of pvrResult.sectionsToReroll) {
+      if (!result.subQuestions?.[sectionId]) continue;
+
+      const subQ = result.subQuestions[sectionId];
+      const subQIndex = parseInt(sectionId.replace('q', ''), 10) - 1;
+      const subQData = execution.subQuestionResults?.[subQIndex];
+
+      console.error(`[Research] Re-rolling section ${sectionId}: ${subQ.question.slice(0, 50)}...`);
+
+      // Build re-roll prompt with anchor context
+      const rerollPrompt = this.buildRerollPrompt(
+        subQ.question,
+        synthesis.overview,
+        manifest,
+        contradictionContext,
+        subQData
+      );
+
+      try {
+        const { callLLM } = await import('./clients/llm.js');
+        const response = await callLLM(rerollPrompt, {
+          provider: 'gemini',
+          model: 'gemini-3-flash-preview',
+          apiKey: this.env.GEMINI_API_KEY,
+          timeout: 30000,
+          maxOutputTokens: 4000,
+          temperature: 0.2,
+        });
+
+        result.subQuestions[sectionId] = {
+          question: subQ.question,
+          answer: response.content.trim(),
+        };
+      } catch (error) {
+        console.error(`[Research] Failed to re-roll ${sectionId}:`, error);
+        // Keep original on failure
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Build prompt for speculative re-rolling
+   * Forces alignment with overview (anchor section)
+   */
+  private buildRerollPrompt(
+    question: string,
+    overviewAnchor: string,
+    manifest: GlobalManifest,
+    contradictionContext: string,
+    subQData?: any
+  ): string {
+    const manifestSection = manifest.keyFacts.length > 0
+      ? `\nGLOBAL FACTS (use these EXACT values):\n${manifest.keyFacts.map(f => `- ${f}`).join('\n')}\n`
+      : '';
+
+    const dataSection = subQData?.perplexityResult?.content
+      ? `\nResearch Data:\n${subQData.perplexityResult.content.slice(0, 1500)}\n`
+      : '';
+
+    return `You are re-synthesizing a section that CONTRADICTED the main overview.
+
+SUB-QUESTION: ${question}
+
+ANCHOR (main overview - this is the source of truth):
+${overviewAnchor.slice(0, 2000)}
+
+${manifestSection}
+
+DETECTED CONTRADICTIONS (you must RESOLVE these):
+${contradictionContext}
+
+${dataSection}
+
+YOUR TASK:
+Re-write the answer to this sub-question so that it:
+1. ALIGNS with the anchor overview above
+2. Uses the EXACT numeric values from Global Facts
+3. Does NOT contradict the main findings
+4. Provides a thorough answer with citations
+
+Write the answer directly, no preamble.`;
   }
 
   /**

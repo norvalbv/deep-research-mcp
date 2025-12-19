@@ -1,0 +1,253 @@
+{
+  "$schema": "./golden-cases.schema.json",
+  "version": "1.0.0",
+  "description": "Golden test cases for PVR consistency verification. Based on arxiv:2310.03025 and arxiv:2303.16634 (G-Eval).",
+  "testCases": [
+    {
+      "id": "numeric-contradiction-threshold",
+      "description": "Different threshold values across sections",
+      "category": "contradiction",
+      "sections": {
+        "overview": "The recommended threshold is 0.85 based on arxiv:2310.03025.",
+        "q1": "Use a threshold of 0.75 for best results."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "high"
+      }
+    },
+    {
+      "id": "numeric-consistent-threshold",
+      "description": "Same threshold value across sections",
+      "category": "consistency",
+      "sections": {
+        "overview": "The recommended threshold is 0.85 based on research.",
+        "q1": "As mentioned, the 0.85 threshold provides optimal balance."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.85
+      }
+    },
+    {
+      "id": "time-estimate-contradiction",
+      "description": "Contradicting time estimates",
+      "category": "contradiction",
+      "sections": {
+        "overview": "The full implementation takes approximately 20 hours.",
+        "q1": "This phase requires 15 hours.",
+        "q2": "This phase requires 12 hours."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "notes": "15 + 12 = 27 hours but overview says 20 hours"
+      }
+    },
+    {
+      "id": "time-estimate-consistent",
+      "description": "Consistent time estimates that add up",
+      "category": "consistency",
+      "sections": {
+        "overview": "The full implementation takes approximately 27 hours across three phases.",
+        "q1": "Phase 1 requires 10 hours.",
+        "q2": "Phase 2 requires 12 hours.",
+        "q3": "Phase 3 requires 5 hours."
+      },
+      "expected": {
+        "isConsistent": true,
+        "notes": "10 + 12 + 5 = 27 hours matches overview"
+      }
+    },
+    {
+      "id": "approach-contradiction",
+      "description": "Contradicting recommendations",
+      "category": "contradiction",
+      "sections": {
+        "overview": "Use sequential processing for best accuracy.",
+        "q1": "Parallel processing is strongly recommended for this use case."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "high"
+      }
+    },
+    {
+      "id": "approach-consistent",
+      "description": "Consistent approach recommendation",
+      "category": "consistency",
+      "sections": {
+        "overview": "Use PVR (Parallel-Verify-Resolve) architecture for consistency.",
+        "q1": "The PVR approach maintains 98% consistency at 6x speed."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.85
+      }
+    },
+    {
+      "id": "model-version-contradiction",
+      "description": "Different model versions specified",
+      "category": "contradiction",
+      "sections": {
+        "overview": "Use GPT-4 for synthesis tasks.",
+        "q1": "GPT-3.5 is sufficient for this task."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "medium"
+      }
+    },
+    {
+      "id": "cost-estimate-contradiction",
+      "description": "Contradicting cost estimates",
+      "category": "contradiction",
+      "sections": {
+        "overview": "Total cost is approximately $500.",
+        "q1": "API costs will be around $300.",
+        "q2": "Infrastructure costs are approximately $400."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "notes": "$300 + $400 = $700 but overview says $500"
+      }
+    },
+    {
+      "id": "library-version-consistent",
+      "description": "Consistent library version across sections",
+      "category": "consistency",
+      "sections": {
+        "overview": "Use langsmith>=0.1.0 for dataset management.",
+        "q1": "Install langsmith 0.1.0 or higher for this feature."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.85
+      }
+    },
+    {
+      "id": "accuracy-metric-contradiction",
+      "description": "Different accuracy targets",
+      "category": "contradiction",
+      "sections": {
+        "overview": "Target 95% accuracy for production deployment.",
+        "q1": "An accuracy of 85% is acceptable for this use case."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "high"
+      }
+    },
+    {
+      "id": "latency-requirement-consistent",
+      "description": "Consistent latency requirements",
+      "category": "consistency",
+      "sections": {
+        "overview": "Target p95 latency under 200ms.",
+        "q1": "The verification step must complete in under 200ms at p95."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.85
+      }
+    },
+    {
+      "id": "database-recommendation-contradiction",
+      "description": "Contradicting database recommendations",
+      "category": "contradiction",
+      "sections": {
+        "overview": "Use PostgreSQL for relational data storage.",
+        "q1": "MongoDB is the best choice for this data model."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "high"
+      }
+    },
+    {
+      "id": "retry-logic-consistent",
+      "description": "Consistent retry configuration",
+      "category": "consistency",
+      "sections": {
+        "overview": "Use 3 retries with exponential backoff.",
+        "q1": "Configure max_retries=3 with exponential backoff starting at 1s."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.85
+      }
+    },
+    {
+      "id": "test-size-contradiction",
+      "description": "Contradicting test dataset sizes",
+      "category": "contradiction",
+      "sections": {
+        "overview": "A minimum of 500 test examples is required.",
+        "q1": "200 examples should be sufficient for evaluation."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "high"
+      }
+    },
+    {
+      "id": "empty-sections",
+      "description": "Sections with no extractable claims",
+      "category": "edge-case",
+      "sections": {
+        "overview": "This section has no specific claims.",
+        "q1": "No data available."
+      },
+      "expected": {
+        "isConsistent": true,
+        "notes": "Should pass with no contradictions when no claims to compare"
+      }
+    },
+    {
+      "id": "single-section",
+      "description": "Only one section with claims",
+      "category": "edge-case",
+      "sections": {
+        "overview": "The threshold is 0.85 and latency should be under 5s."
+      },
+      "expected": {
+        "isConsistent": true,
+        "notes": "Cannot contradict with only one section"
+      }
+    },
+    {
+      "id": "minor-wording-difference",
+      "description": "Same meaning with different wording",
+      "category": "consistency",
+      "sections": {
+        "overview": "The system achieves high accuracy.",
+        "q1": "Accuracy levels are excellent."
+      },
+      "expected": {
+        "isConsistent": true,
+        "notes": "Should not flag as contradiction - same meaning"
+      }
+    },
+    {
+      "id": "citation-alignment",
+      "description": "Citations should match across sections",
+      "category": "consistency",
+      "sections": {
+        "overview": "As shown in arxiv:2310.03025, the threshold is 0.85.",
+        "q1": "Research [arxiv:2310.03025] confirms 0.85 as optimal."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.9
+      }
+    }
+  ]
+}
+

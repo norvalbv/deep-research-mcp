@@ -1,6 +1,36 @@
 export type ComplexityLevel = 1 | 2 | 3 | 4 | 5;
 
 /**
+ * Global Constraint Manifest - Extracted from sources BEFORE synthesis
+ * Ensures all parallel synthesis calls share consistent facts
+ * Based on arxiv:2310.03025 (PVR architecture)
+ */
+export interface GlobalManifest {
+  keyFacts: string[];                    // Core facts from sources, e.g., "threshold is 0.85 per arxiv:2310.03025"
+  numerics: Record<string, number>;      // Numeric values, e.g., { "entailmentThreshold": 0.85 }
+  sources: string[];                     // Source citations, e.g., ["arxiv:2310.03025", "perplexity:url"]
+  extractedAt: number;                   // Timestamp for cache invalidation
+}
+
+/**
+ * PVR (Parallel-Verify-Resolve) verification result
+ * Based on arxiv:2310.03025 and arxiv:2305.14251
+ */
+export interface PVRVerificationResult {
+  entailmentScore: number;               // 0-1, target >= 0.85
+  isConsistent: boolean;                 // true if score >= threshold
+  contradictions: Array<{
+    sectionA: string;                    // e.g., "overview"
+    sectionB: string;                    // e.g., "q1"
+    claimA: string;                      // Conflicting claim from section A
+    claimB: string;                      // Conflicting claim from section B
+    severity: 'high' | 'medium' | 'low'; // Impact on usability
+  }>;
+  sectionsToReroll: string[];            // Section IDs that need re-synthesis
+  verificationTimeMs: number;            // For monitoring
+}
+
+/**
  * Individual section within a research report
  */
 export interface Section {

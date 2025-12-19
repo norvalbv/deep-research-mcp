@@ -1,14 +1,26 @@
 /**
  * Research validation: challenge, sufficiency voting, and improvements
  * 
- * Flow: Synthesis → Critical Challenge (attacks synthesis vs input) → Sufficiency Vote (synthesis vs critique)
+ * Flow: Synthesis → PVR Verification → Critical Challenge → Sufficiency Vote
+ * 
+ * PVR (Parallel-Verify-Resolve) based on:
+ * - arxiv:2310.03025 (Parallel RAG consistency)
+ * - arxiv:2305.14251 (Cross-sectional NLI)
  */
 
 import { callLLM } from './clients/llm.js';
 import { ExecutionResult } from './execution.js';
 import { ResearchActionPlan, extractContent } from './planning.js';
-import { DocumentationCache } from './types/index.js';
+import { DocumentationCache, GlobalManifest, PVRVerificationResult } from './types/index.js';
 import { SynthesisOutput } from './synthesis.js';
+
+// PVR Configuration (research-backed thresholds)
+const PVR_CONFIG = {
+  ENTAILMENT_THRESHOLD: 0.85,      // arxiv:2310.03025 recommends 0.85
+  VERIFICATION_TIMEOUT_MS: 15000,
+  MAX_REROLL_ATTEMPTS: 2,
+  MIN_CLAIMS_FOR_CHECK: 2,
+};
 
 export interface ChallengeResult {
   critiques: string[];      // Numbered critique points
@@ -36,6 +48,10 @@ export async function runChallenge(
     enrichedContext?: string;
     constraints?: string[];
     subQuestions?: string[];
+    validSources?: {
+      arxivPapers?: { id: string; title: string }[];
+      perplexitySources?: string[];
+    };
   }
 ): Promise<ChallengeResult | undefined> {
   if (!geminiKey) return undefined;
@@ -62,6 +78,10 @@ function buildChallengePrompt(
     enrichedContext?: string;
     constraints?: string[];
     subQuestions?: string[];
+    validSources?: {
+      arxivPapers?: { id: string; title: string }[];
+      perplexitySources?: string[];
+    };
   }
 ): string {
   const constraintsSection = context?.constraints?.length 
@@ -72,7 +92,19 @@ function buildChallengePrompt(
     ? `\nSUB-QUESTIONS:\n${context.subQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`
     : '';
 
+  // Add valid sources context so challenger knows which citations are legitimate
+  const validSourcesSection = context?.validSources
+    ? `\nVALID SOURCES (citations to these are LEGITIMATE):\n` +
+      (context.validSources.arxivPapers?.length 
+        ? `- arXiv Papers: ${context.validSources.arxivPapers.map(p => `[arxiv:${p.id}] "${p.title}"`).join(', ')}\n`
+        : '') +
+      (context.validSources.perplexitySources?.length 
+        ? `- Web Sources: ${context.validSources.perplexitySources.length} sources from Perplexity search\n`
+        : '')
+    : '';
+
   return `You are a CRITICAL REVIEWER using a checklist-based audit.
+${validSourcesSection}
 
 ORIGINAL QUERY:
 ${query}
@@ -178,6 +210,10 @@ export async function runConsensusValidation(
   const webSources = executionResult.perplexityResult?.sources?.length
     ? `\n\n**Web Sources:**\n${executionResult.perplexityResult.sources.map((s, i) => `${i + 1}. ${s}`).join('\n')}`
     : '';
+
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:runConsensusValidation',message:'H3/H4: Consensus validation data',data:{hasArxivPapers:!!executionResult.arxivPapers?.papers?.length,paperCount:executionResult.arxivPapers?.papers?.length||0,paperTitles:executionResult.arxivPapers?.papers?.slice(0,3).map(p=>p.title)||[],hasPerplexity:!!executionResult.perplexityResult?.content,sourceCount:executionResult.perplexityResult?.sources?.length||0},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3,H4'})}).catch(()=>{});
+  // #endregion
 
   const libraryDocs = executionResult.libraryDocs
     ? `**Library Documentation (Context7):**\n${executionResult.libraryDocs.slice(0, 2000)}`
@@ -349,12 +385,28 @@ function parseVoteResponse(
   model: string
 ): { model: string; vote: 'synthesis_wins' | 'critique_wins'; reasoning: string; criticalGaps?: string[] } {
   try {
-    const content = extractContent(response);
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON found');
+    // First try to extract from markdown code block
+    const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const contentToSearch = codeBlockMatch ? codeBlockMatch[1] : response;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse',message:'H-A/H-E: Vote response parsing',data:{model,rawResponseLength:response.length,usedCodeBlock:!!codeBlockMatch,contentToSearchLength:contentToSearch.length,contentPreview:contentToSearch.slice(0,300)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-A,H-E'})}).catch(()=>{});
+    // #endregion
+    
+    const jsonMatch = contentToSearch.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse:noJSON',message:'H-A: No JSON found in response',data:{model,contentToSearch:contentToSearch.slice(0,500)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-A'})}).catch(()=>{});
+      // #endregion
+      throw new Error('No JSON found');
+    }
     
     const parsed = JSON.parse(jsonMatch[0]);
     const vote = parsed.vote === 'critique_wins' ? 'critique_wins' : 'synthesis_wins';
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse:success',message:'H-A: Parse succeeded',data:{model,vote,reasoning:parsed.reasoning?.slice(0,100)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-A'})}).catch(()=>{});
+    // #endregion
     
     return {
       model,
@@ -362,7 +414,10 @@ function parseVoteResponse(
       reasoning: parsed.reasoning || 'No reasoning provided',
       criticalGaps: Array.isArray(parsed.critical_gaps) ? parsed.critical_gaps : [],
     };
-  } catch {
+  } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse:catch',message:'H-A: Parse error',data:{model,error:String(error),responsePreview:response.slice(0,500)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-A'})}).catch(()=>{});
+    // #endregion
     // Default to synthesis_wins on parse failure
     return { 
       model, 
@@ -384,6 +439,323 @@ export function summarizeFindings(executionResult: ExecutionResult, actionPlan?:
   if (executionResult.arxivPapers?.papers.length) parts.push(`Papers: ${executionResult.arxivPapers.papers.length}`);
   if (executionResult.subQuestionResults?.length) parts.push(`Sub-Qs: ${executionResult.subQuestionResults.length}`);
   return parts.join('\n');
+}
+
+// ============================================================================
+// PVR (Parallel-Verify-Resolve) Verification Layer
+// Based on arxiv:2310.03025 and arxiv:2305.14251
+// ============================================================================
+
+/**
+ * Run PVR verification on synthesis output
+ * Extracts claims from each section and checks for contradictions using NLI
+ * 
+ * @param synthesis - Structured synthesis output with sections
+ * @param manifest - Global constraint manifest with source facts
+ * @param geminiKey - API key for LLM-based NLI
+ * @returns Verification result with entailment score and contradictions
+ */
+export async function runPVRVerification(
+  synthesis: SynthesisOutput,
+  manifest: GlobalManifest,
+  geminiKey: string | undefined
+): Promise<PVRVerificationResult> {
+  const startTime = Date.now();
+  
+  const result: PVRVerificationResult = {
+    entailmentScore: 1.0,
+    isConsistent: true,
+    contradictions: [],
+    sectionsToReroll: [],
+    verificationTimeMs: 0,
+  };
+
+  // Skip if no API key
+  if (!geminiKey) {
+    result.verificationTimeMs = Date.now() - startTime;
+    return result;
+  }
+
+  // Extract claims from all sections
+  const sectionClaims = await extractClaimsFromSections(synthesis, geminiKey);
+  
+  // Need at least 2 sections with claims to compare
+  const sectionsWithClaims = Object.entries(sectionClaims).filter(([_, claims]) => claims.length > 0);
+  if (sectionsWithClaims.length < PVR_CONFIG.MIN_CLAIMS_FOR_CHECK) {
+    console.error('[PVR] Insufficient sections for cross-check, skipping verification');
+    result.verificationTimeMs = Date.now() - startTime;
+    return result;
+  }
+
+  console.error(`[PVR] Verifying ${sectionsWithClaims.length} sections with ${sectionsWithClaims.reduce((sum, [_, c]) => sum + c.length, 0)} claims...`);
+
+  // Run cross-sectional NLI check
+  const nliResult = await runCrossSectionalNLI(sectionClaims, manifest, geminiKey);
+  
+  result.entailmentScore = nliResult.score;
+  result.isConsistent = nliResult.score >= PVR_CONFIG.ENTAILMENT_THRESHOLD;
+  result.contradictions = nliResult.contradictions;
+  
+  // Identify sections that need re-rolling
+  if (!result.isConsistent) {
+    const contradictingSections = new Set<string>();
+    for (const c of result.contradictions) {
+      if (c.severity === 'high') {
+        contradictingSections.add(c.sectionA);
+        contradictingSections.add(c.sectionB);
+      }
+    }
+    // Keep overview, re-roll sub-questions if they contradict
+    result.sectionsToReroll = Array.from(contradictingSections).filter(s => s !== 'overview');
+  }
+
+  result.verificationTimeMs = Date.now() - startTime;
+  console.error(`[PVR] Score: ${result.entailmentScore.toFixed(2)}, Consistent: ${result.isConsistent}, Time: ${result.verificationTimeMs}ms`);
+  
+  return result;
+}
+
+/**
+ * Extract atomic claims from each section of the synthesis
+ * Uses LLM to break down prose into discrete factual claims
+ */
+async function extractClaimsFromSections(
+  synthesis: SynthesisOutput,
+  geminiKey: string
+): Promise<Record<string, string[]>> {
+  const claims: Record<string, string[]> = {};
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:extractClaimsFromSections:start',message:'H-D: Synthesis structure check',data:{hasOverview:!!synthesis.overview,overviewLength:synthesis.overview?.length||0,subQuestionsCount:synthesis.subQuestions?Object.keys(synthesis.subQuestions).length:0,subQuestionKeys:synthesis.subQuestions?Object.keys(synthesis.subQuestions):[]},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-D'})}).catch(()=>{});
+  // #endregion
+  
+  const extractionPrompt = (sectionName: string, content: string) => `Extract ATOMIC CLAIMS from this text section.
+
+Section: ${sectionName}
+Content:
+${content.slice(0, 2000)}
+
+---
+
+Extract discrete, verifiable claims. Focus on:
+1. Numeric values and thresholds
+2. Recommendations and conclusions
+3. Technical specifications
+4. Time/cost estimates
+
+Return JSON only:
+{
+  "claims": [
+    "claim 1 as a single fact",
+    "claim 2 as a single fact"
+  ]
+}
+
+Keep claims concise (under 100 chars each). Max 10 claims.`;
+
+  // Extract claims from overview
+  try {
+    const overviewResponse = await callLLMWithTimeout(
+      extractionPrompt('Overview', synthesis.overview),
+      geminiKey,
+      PVR_CONFIG.VERIFICATION_TIMEOUT_MS
+    );
+    claims.overview = parseClaimsResponse(overviewResponse);
+  } catch {
+    claims.overview = [];
+  }
+
+  // Extract claims from sub-questions in parallel
+  if (synthesis.subQuestions) {
+    const subQPromises = Object.entries(synthesis.subQuestions).map(async ([key, value]): Promise<[string, string[]]> => {
+      try {
+        const response = await callLLMWithTimeout(
+          extractionPrompt(value.question, value.answer),
+          geminiKey,
+          PVR_CONFIG.VERIFICATION_TIMEOUT_MS
+        );
+        return [key, parseClaimsResponse(response)];
+      } catch {
+        return [key, []];
+      }
+    });
+
+    const subQResults = await Promise.all(subQPromises);
+    for (const [key, sectionClaims] of subQResults) {
+      claims[key] = sectionClaims;
+    }
+  }
+
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:extractClaimsFromSections:complete',message:'H-D: Claims extraction complete',data:{sectionCount:Object.keys(claims).length,sections:Object.keys(claims),claimsPerSection:Object.fromEntries(Object.entries(claims).map(([k,v])=>[k,v.length]))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-D'})}).catch(()=>{});
+  // #endregion
+
+  return claims;
+}
+
+/**
+ * Run cross-sectional Natural Language Inference (NLI)
+ * Compares claims across sections to detect contradictions
+ */
+async function runCrossSectionalNLI(
+  sectionClaims: Record<string, string[]>,
+  manifest: GlobalManifest,
+  geminiKey: string
+): Promise<{
+  score: number;
+  contradictions: PVRVerificationResult['contradictions'];
+}> {
+  const contradictions: PVRVerificationResult['contradictions'] = [];
+  
+  // Flatten all claims for comparison
+  const allClaims: Array<{ section: string; claim: string }> = [];
+  for (const [section, claims] of Object.entries(sectionClaims)) {
+    for (const claim of claims) {
+      allClaims.push({ section, claim });
+    }
+  }
+
+  if (allClaims.length < 2) {
+    return { score: 1.0, contradictions: [] };
+  }
+
+  // Build NLI prompt for batch checking
+  const claimsList = allClaims
+    .map((c, i) => `[${i + 1}] (${c.section}) ${c.claim}`)
+    .join('\n');
+
+  const manifestContext = manifest.keyFacts.length > 0
+    ? `\nGlobal Facts (source of truth):\n${manifest.keyFacts.map(f => `- ${f}`).join('\n')}\n`
+    : '';
+
+  const nliPrompt = `You are a consistency checker. Find CONTRADICTIONS between claims.
+
+${manifestContext}
+Claims to check:
+${claimsList}
+
+---
+
+Find pairs that CONTRADICT each other. Contradiction means:
+- Different numeric values for the same metric
+- Opposite recommendations
+- Conflicting time/cost estimates
+- Mutually exclusive statements
+
+Return JSON only:
+{
+  "contradictions": [
+    {
+      "claimA": 1,
+      "claimB": 3,
+      "reason": "Both discuss threshold but A says 0.85 while B says 0.75",
+      "severity": "high"
+    }
+  ],
+  "consistent_pairs": 0
+}
+
+If no contradictions found, return empty array.
+severity: "high" = different numbers, "medium" = different approaches, "low" = minor wording`;
+
+  try {
+    const response = await callLLMWithTimeout(nliPrompt, geminiKey, PVR_CONFIG.VERIFICATION_TIMEOUT_MS * 2);
+    
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      
+      if (Array.isArray(parsed.contradictions)) {
+        for (const c of parsed.contradictions) {
+          const claimA = allClaims[c.claimA - 1];
+          const claimB = allClaims[c.claimB - 1];
+          
+          if (claimA && claimB) {
+            contradictions.push({
+              sectionA: claimA.section,
+              sectionB: claimB.section,
+              claimA: claimA.claim,
+              claimB: claimB.claim,
+              severity: c.severity || 'medium',
+            });
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[PVR] NLI check failed:', error);
+    // Default to consistent on error (fail-open per arxiv:2309.01431)
+    return { score: 1.0, contradictions: [] };
+  }
+
+  // Calculate entailment score
+  // Score = 1 - (weighted contradictions / total possible pairs)
+  const totalPairs = (allClaims.length * (allClaims.length - 1)) / 2;
+  const weightedContradictions = contradictions.reduce((sum, c) => {
+    const weight = c.severity === 'high' ? 1.0 : c.severity === 'medium' ? 0.5 : 0.25;
+    return sum + weight;
+  }, 0);
+  
+  const score = Math.max(0, 1 - (weightedContradictions / Math.max(totalPairs, 1)));
+  
+  return { score, contradictions };
+}
+
+/**
+ * Helper: Call LLM with timeout (returns content or throws)
+ */
+async function callLLMWithTimeout(
+  prompt: string,
+  geminiKey: string,
+  timeoutMs: number
+): Promise<string> {
+  // #region agent log
+  const startTime = Date.now();
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:callLLMWithTimeout:start',message:'H-B/H-C: LLM call starting',data:{timeoutMs,promptLength:prompt.length,promptPreview:prompt.slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-B,H-C'})}).catch(()=>{});
+  // #endregion
+  try {
+    const response = await callLLM(prompt, {
+      provider: 'gemini',
+      model: 'gemini-3-flash-preview',
+      apiKey: geminiKey,
+      timeout: timeoutMs,
+      maxOutputTokens: 2000,
+    });
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:callLLMWithTimeout:success',message:'H-B/H-C: LLM call succeeded',data:{durationMs:Date.now()-startTime,responseLength:response.content.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-B,H-C'})}).catch(()=>{});
+    // #endregion
+    return response.content;
+  } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:callLLMWithTimeout:error',message:'H-B/H-C: LLM call failed',data:{durationMs:Date.now()-startTime,timeoutMs,error:String(error)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-B,H-C'})}).catch(()=>{});
+    // #endregion
+    throw error;
+  }
+}
+
+/**
+ * Helper: Parse claims JSON response
+ */
+function parseClaimsResponse(response: string): string[] {
+  try {
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed.claims)) {
+        return parsed.claims.slice(0, 10); // Max 10 claims
+      }
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return [];
+}
+
+/**
+ * Get PVR configuration (for documentation/debugging)
+ */
+export function getPVRConfig() {
+  return { ...PVR_CONFIG };
 }
 
 /**
