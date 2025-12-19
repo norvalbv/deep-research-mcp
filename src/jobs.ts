@@ -14,10 +14,10 @@ export interface StructuredResearchResult {
   sources?: string[];
   papers?: Array<{ id: string; title: string; summary: string; url: string }>;
   
-  // NEW: Sectioned content for on-demand reading
+  // Sectioned content for on-demand reading
   sections?: Record<string, Section>;
   
-  // NEW: Executive summary for quick overview
+  // Executive summary for quick overview
   executiveSummary?: ExecutiveSummary;
 }
 
