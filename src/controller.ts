@@ -161,6 +161,9 @@ export class ResearchController {
       // Step 6: Re-synthesis if critique wins (max 1 iteration)
       if (sufficiency && !sufficiency.sufficient && sufficiency.criticalGaps.length > 0) {
         console.error('[Research] Critique wins - re-synthesizing with gaps...');
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'controller.ts:execute:resynthesize',message:'H-I: Gaps passed to re-synthesis',data:{criticalGaps:sufficiency.criticalGaps,gapCount:sufficiency.criticalGaps.length,votesFor:sufficiency.votesFor,votesAgainst:sufficiency.votesAgainst},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-I'})}).catch(()=>{});
+        // #endregion
         improved = true;
         
         // Gather additional data for critical gaps

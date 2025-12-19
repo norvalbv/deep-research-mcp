@@ -235,57 +235,12 @@ ${extractContent(execution.deepThinking).slice(0, 2000)}
 
 Write a comprehensive answer to the main query. Be thorough and detailed.
 
-**MANDATORY REQUIREMENTS:**
-
-1. **Numeric Specificity** - ALL thresholds must be exact numbers with units:
-   - BAD: "high accuracy", "fast response", "sufficient coverage"
-   - GOOD: ">85% F1-score", "<200ms p95 latency", "99.9% uptime"
-   - Show calculation: "How computed: baseline × factor = threshold"
-
-2. **Decision Clarity** - When multiple approaches exist:
-   - State the options compared
-   - Pick ONE clear recommendation
-   - Provide rationale with cost/time tradeoffs
-
-3. **Success Criteria** - For each recommendation:
-   - Measurable metric with threshold
-   - How to test/verify
-   - Definition of "done"
-
-4. **Troubleshooting** - Anticipate failures:
-   - "If X happens → do Y (time cost: +N hours)"
-   - At least 2-3 common failure scenarios
-
-5. **Integration Specifics** - When tech_stack provided:
-   - Use Context7 documentation to provide EXACT API calls, not generic patterns
-   - Specify package versions (e.g., "langsmith>=0.1.0")
-   - Show actual import statements and initialization code
-
-**Important:**
-- Include code examples where relevant (in markdown blocks)
-- Use inline citations: [perplexity:url], [context7:library-name], [arxiv:paper-id]
-- This is ONLY for the main query - sub-questions handled separately
-- Be comprehensive, don't artificially limit length
-
-**CONTRADICTION CHECK** - Before finalizing, verify:
-- Time estimates across sections ADD UP (e.g., if 3 phases of 10hrs each, total should be 30hrs)
-- All numeric thresholds are consistent (don't say ">90%" in one place and ">85%" elsewhere for same metric)
-
-**LOGIC GATE CONSISTENCY** - Critical for multi-condition rules:
-- If you define a threshold with OR logic (e.g., "X OR Y"), use OR consistently everywhere
-- If you define a threshold with AND logic (e.g., "X AND Y"), use AND consistently everywhere
-- Code examples MUST match prose logic (if prose says "must pass both", code must use AND not OR)
-- Use EXPLICIT operators: write "X OR Y" not "either X or Y" (ambiguous)
-- BAD: Overview says "OR" but sub-question implies "AND" with "must pass both gates"
-- GOOD: All sections consistently use "X >= 3 OR score > 0.80" with matching code
-
-**SELF-CHECK:**
-- [ ] All thresholds are numeric with units
-- [ ] No contradictions in your response
-- [ ] Time estimates add up correctly
-- [ ] Every recommendation has ONE clear answer (not "maybe A or B")
-- [ ] Logic operators (AND/OR) are consistent across all sections
-- [ ] Code logic matches prose logic
+**Requirements:**
+1. Use exact numbers with units (">85% accuracy", "<200ms latency")
+2. Pick ONE clear recommendation when multiple options exist
+3. Include working code examples with complete implementations
+4. Use inline citations: [perplexity:N], [context7:library], [arxiv:id]
+5. Be thorough - don't truncate or cut off mid-sentence
 `);
   } else {
     // Build section format instructions for full synthesis
@@ -311,64 +266,14 @@ ${subQuestionSections}
 ## Additional Insights
 [Optional: extra recommendations, caveats, or implementation tips]
 
-**MANDATORY REQUIREMENTS:**
-
-1. **Numeric Specificity** - ALL thresholds must be exact numbers with units:
-   - BAD: "high accuracy", "fast response", "sufficient coverage"
-   - GOOD: ">85% F1-score", "<200ms p95 latency", "99.9% uptime"
-   - Show calculation: "How computed: baseline × factor = threshold"
-
-2. **Decision Clarity** - When multiple approaches exist:
-   - State the options compared
-   - Pick ONE clear recommendation
-   - Provide rationale with cost/time tradeoffs
-
-3. **Success Criteria** - For each recommendation:
-   - Measurable metric with threshold
-   - How to test/verify
-   - Definition of "done"
-
-4. **Troubleshooting** - Anticipate failures:
-   - "If X happens → do Y (time cost: +N hours)"
-   - At least 2-3 common failure scenarios
-
-5. **Integration Specifics** - When tech_stack provided:
-   - Use Context7 documentation to provide EXACT API calls, not generic patterns
-   - Specify package versions (e.g., "langsmith>=0.1.0")
-   - Show actual import statements and initialization code
-
-**Important:**
-- Use the EXACT section delimiters shown above: <!-- SECTION:name -->
-- Be comprehensive and thorough in each section
-- Include code examples in markdown code blocks where helpful
-- **Use inline citations** to indicate source of information:
-  - [perplexity:url] for web search findings
-  - [context7:library-name] for library documentation/code
-  - [arxiv:paper-id] for academic papers
-  - Example: "LangSmith provides dataset management [context7:langsmith] which allows version control [perplexity:langsmith-docs]"
-- Cite sources when making specific claims or showing code examples
-- Don't artificially limit your response length
-
-**CONTRADICTION CHECK** - Before finalizing, verify:
-- Time estimates across sections ADD UP (e.g., if 3 phases of 10hrs each, total should be 30hrs)
-- If main says "use approach A" and sub-question says "avoid A", reconcile with ONE clear recommendation
-- All numeric thresholds are consistent (don't say ">90%" in one place and ">85%" elsewhere for same metric)
-
-**LOGIC GATE CONSISTENCY** - Critical for multi-condition rules:
-- If you define a threshold with OR logic (e.g., "X OR Y"), use OR consistently in ALL sections
-- If you define a threshold with AND logic (e.g., "X AND Y"), use AND consistently in ALL sections
-- Code examples MUST match prose logic (if prose says "must pass both", code must use AND not OR)
-- Use EXPLICIT operators: write "X OR Y" not "either X or Y" (ambiguous)
-- BAD: Overview says "OR" but sub-question implies "AND" with "must pass both gates"
-- GOOD: All sections consistently use "X >= 3 OR score > 0.80" with matching code
-
-**SELF-CHECK:**
-- [ ] All thresholds are numeric with units
-- [ ] No contradictions between sections
-- [ ] Time estimates add up correctly
-- [ ] Every recommendation has ONE clear answer (not "maybe A or B")
-- [ ] Logic operators (AND/OR) are consistent across ALL sections
-- [ ] Code logic matches prose logic in every section
+**Requirements:**
+1. Use EXACT section delimiters: <!-- SECTION:name -->
+2. Use exact numbers with units (">85% accuracy", "<200ms latency")
+3. Pick ONE clear recommendation when multiple options exist
+4. Include working code examples with complete implementations
+5. Inline citations: [perplexity:N], [context7:library], [arxiv:id]
+6. Keep logic consistent across sections (if overview uses "X OR Y", sub-questions must too)
+7. Be thorough - don't truncate mid-sentence
 `);
   }
 
@@ -598,14 +503,10 @@ Answer the sub-question thoroughly. Ensure your answer:
 - Leverages academic papers if relevant to this specific question
 - Is comprehensive and detailed
 
-**LOGIC CONSISTENCY (Critical):**
-- If the key findings above use OR logic (e.g., "X OR Y"), you MUST use OR in your answer
-- If the key findings above use AND logic (e.g., "X AND Y"), you MUST use AND in your answer
-- Code examples MUST match the logic operators used in prose
-- Do NOT write "must pass both gates" if the main finding uses OR logic
-- Use EXPLICIT operators: "X OR Y" not "either X or Y"
-
-Don't artificially limit your response length.`);
+**Requirements:**
+- Match the logic from key findings (if overview uses OR, you must too)
+- Include complete, working code examples
+- Be thorough - don't truncate mid-sentence`);
 
   const response = await callLLM(sections.join('\n'), {
     provider: 'gemini',
@@ -755,6 +656,9 @@ If no numeric values found, return empty object for numerics.`;
     }
 
     console.error(`[Manifest] Extracted ${manifest.keyFacts.length} facts, ${Object.keys(manifest.numerics).length} numerics`);
+
+    console.error(`[Manifest] Extracted key facts: ${manifest.keyFacts}`);
+    console.error(`[Manifest] Extracted numerics: ${Object.keys(manifest.numerics)}`);
   } catch (error) {
     console.error('[Manifest] Extraction failed, using empty manifest:', error);
   }

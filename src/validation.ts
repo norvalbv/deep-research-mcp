@@ -179,6 +179,10 @@ function parseChallengeResponse(response: string): ChallengeResult {
     critiques.push(content);
   }
   
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseChallengeResponse',message:'H-G: Challenge critique points',data:{critiqueCount:critiques.length,hasSignificantGaps:critiques.length>0,critiques:critiques.slice(0,5)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-G'})}).catch(()=>{});
+  // #endregion
+
   return {
     critiques,
     hasSignificantGaps: critiques.length > 0,
@@ -317,6 +321,10 @@ export async function runSufficiencyVote(
     .filter(v => v.vote === 'critique_wins' && v.criticalGaps)
     .flatMap(v => v.criticalGaps || []);
   const uniqueGaps = [...new Set(allGaps)];
+
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:runSufficiencyVote:result',message:'H-G/H-H: Vote results with reasoning',data:{synthesisWins,critiqueWins,sufficient,uniqueGaps,voteDetails:validVotes.map(v=>({model:v.model,vote:v.vote,reasoning:v.reasoning?.slice(0,200),gaps:v.criticalGaps?.slice(0,3)}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-G,H-H'})}).catch(()=>{});
+  // #endregion
 
   console.error(`[Vote] Result: ${synthesisWins} synthesis_wins, ${critiqueWins} critique_wins`);
 
@@ -482,6 +490,9 @@ export async function runPVRVerification(
   const logicResult = await checkLogicConsistency(sectionClaims, geminiKey);
   if (logicResult.hasConflict) {
     console.error(`[PVR] Logic conflict detected: ${logicResult.conflicts.length} issues`);
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:runPVRVerification:logicConflict',message:'H-F: Logic conflict details',data:{conflicts:logicResult.conflicts,claimsSample:Object.fromEntries(Object.entries(sectionClaims).map(([k,v])=>[k,v.slice(0,3)]))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-F'})}).catch(()=>{});
+    // #endregion
     result.isConsistent = false;
     // Add logic conflicts as high-severity contradictions
     for (const conflict of logicResult.conflicts) {
