@@ -32,8 +32,15 @@ export interface SufficiencyVote {
   sufficient: boolean;      // true = synthesis wins, false = critique wins
   votesFor: number;         // synthesis_wins votes
   votesAgainst: number;     // critique_wins votes
-  criticalGaps: string[];   // Gaps identified if critique wins
-  details: Array<{ model: string; vote: 'synthesis_wins' | 'critique_wins'; reasoning: string }>;
+  criticalGaps: string[];   // CRITICAL_GAP issues identified
+  stylisticPreferences: string[]; // STYLISTIC_PREFERENCE issues (informational)
+  hasCriticalGap: boolean;  // HCSP: if true, auto-fail regardless of vote count
+  details: Array<{ 
+    model: string; 
+    vote: 'synthesis_wins' | 'critique_wins'; 
+    reasoning: string;
+    critiques: CategorizedCritique[];
+  }>;
 }
 
 /**
@@ -179,10 +186,6 @@ function parseChallengeResponse(response: string): ChallengeResult {
     critiques.push(content);
   }
   
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseChallengeResponse',message:'H-G: Challenge critique points',data:{critiqueCount:critiques.length,hasSignificantGaps:critiques.length>0,critiques:critiques.slice(0,5)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-G'})}).catch(()=>{});
-  // #endregion
-
   return {
     critiques,
     hasSignificantGaps: critiques.length > 0,
@@ -265,8 +268,10 @@ Provide a 2-3 paragraph consensus evaluation focusing on reliability and actiona
 }
 
 /**
- * Run sufficiency vote - COMPARES synthesis vs critique
- * Votes on whether synthesis wins or critique wins
+ * Run sufficiency vote - COMPARES synthesis vs critique using HCSP
+ * (Hierarchical Constraint Satisfaction Protocol)
+ * 
+ * Key rule: If ANY vote identifies a CRITICAL_GAP, synthesis fails regardless of vote count
  */
 export async function runSufficiencyVote(
   geminiKey: string | undefined,
@@ -284,11 +289,18 @@ export async function runSufficiencyVote(
       votesFor: 1,
       votesAgainst: 0,
       criticalGaps: [],
-      details: [{ model: 'default', vote: 'synthesis_wins', reasoning: 'No significant gaps identified in critique' }],
+      stylisticPreferences: [],
+      hasCriticalGap: false,
+      details: [{ 
+        model: 'default', 
+        vote: 'synthesis_wins', 
+        reasoning: 'No significant gaps identified in critique',
+        critiques: [],
+      }],
     };
   }
 
-  console.error('[Vote] Comparing synthesis vs critique...');
+  console.error('[Vote] Comparing synthesis vs critique with HCSP...');
 
   const prompt = buildVotePrompt(query, synthesis, challenge);
   
@@ -298,7 +310,15 @@ export async function runSufficiencyVote(
   
   if (configs.length === 0) {
     console.error('[Vote] No API keys configured, assuming synthesis wins');
-    return { sufficient: true, votesFor: 0, votesAgainst: 0, criticalGaps: [], details: [] };
+    return { 
+      sufficient: true, 
+      votesFor: 0, 
+      votesAgainst: 0, 
+      criticalGaps: [], 
+      stylisticPreferences: [],
+      hasCriticalGap: false,
+      details: [] 
+    };
   }
 
   const responses = await callLLMsParallel(prompt, configs);
@@ -309,43 +329,73 @@ export async function runSufficiencyVote(
 
   if (validVotes.length === 0) {
     console.error('[Vote] All votes failed, assuming synthesis wins');
-    return { sufficient: true, votesFor: 0, votesAgainst: 0, criticalGaps: [], details: [] };
+    return { 
+      sufficient: true, 
+      votesFor: 0, 
+      votesAgainst: 0, 
+      criticalGaps: [], 
+      stylisticPreferences: [],
+      hasCriticalGap: false,
+      details: [] 
+    };
   }
 
+  // HCSP Aggregation: Collect all critiques by type
+  const allCriticalGaps: string[] = [];
+  const allStylisticPreferences: string[] = [];
+  
+  for (const vote of validVotes) {
+    for (const critique of vote.critiques) {
+      if (critique.type === 'CRITICAL_GAP') {
+        allCriticalGaps.push(critique.issue);
+      } else {
+        allStylisticPreferences.push(critique.issue);
+      }
+    }
+  }
+
+  // Deduplicate
+  const uniqueCriticalGaps = [...new Set(allCriticalGaps)];
+  const uniqueStylisticPreferences = [...new Set(allStylisticPreferences)];
+  
+  // HCSP Rule: If ANY CRITICAL_GAP exists, synthesis fails
+  const hasCriticalGap = uniqueCriticalGaps.length > 0 || validVotes.some(v => v.hasCriticalGap);
+  
+  // Count votes (for logging, but HCSP overrides)
   const synthesisWins = validVotes.filter(v => v.vote === 'synthesis_wins').length;
   const critiqueWins = validVotes.filter(v => v.vote === 'critique_wins').length;
-  const sufficient = synthesisWins >= critiqueWins; // Tie goes to synthesis
+  
+  // HCSP: Critical gap overrides vote majority
+  const sufficient = hasCriticalGap ? false : (synthesisWins >= critiqueWins);
 
-  // Aggregate critical gaps from critique_wins votes
-  const allGaps = validVotes
-    .filter(v => v.vote === 'critique_wins' && v.criticalGaps)
-    .flatMap(v => v.criticalGaps || []);
-  const uniqueGaps = [...new Set(allGaps)];
-
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:runSufficiencyVote:result',message:'H-G/H-H: Vote results with reasoning',data:{synthesisWins,critiqueWins,sufficient,uniqueGaps,voteDetails:validVotes.map(v=>({model:v.model,vote:v.vote,reasoning:v.reasoning?.slice(0,200),gaps:v.criticalGaps?.slice(0,3)}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-G,H-H'})}).catch(()=>{});
-  // #endregion
-
-  console.error(`[Vote] Result: ${synthesisWins} synthesis_wins, ${critiqueWins} critique_wins`);
+  console.error(`[Vote] HCSP Result: ${synthesisWins} synthesis_wins, ${critiqueWins} critique_wins, hasCriticalGap: ${hasCriticalGap}`);
+  if (hasCriticalGap) {
+    console.error(`[Vote] CRITICAL_GAPS detected (${uniqueCriticalGaps.length}): ${uniqueCriticalGaps.slice(0, 3).join('; ')}`);
+  }
 
   return {
     sufficient,
     votesFor: synthesisWins,
     votesAgainst: critiqueWins,
-    criticalGaps: uniqueGaps,
+    criticalGaps: uniqueCriticalGaps,
+    stylisticPreferences: uniqueStylisticPreferences,
+    hasCriticalGap,
     details: validVotes,
   };
 }
 
 /**
- * Build the vote prompt - compares synthesis against critique
+ * Build the vote prompt - compares synthesis against critique using HCSP
+ * (Hierarchical Constraint Satisfaction Protocol)
+ * 
+ * Key insight: Distinguish CRITICAL_GAP (must fail) from STYLISTIC_PREFERENCE (can pass)
  */
 function buildVotePrompt(query: string, synthesis: string, challenge: ChallengeResult): string {
   const critiquePoints = challenge.critiques.length > 0
     ? challenge.critiques.map((c, i) => `${i + 1}. ${c}`).join('\n')
     : challenge.rawResponse;
 
-  return `Compare the SYNTHESIS against the CRITIQUE to determine which is stronger.
+  return `You are a RIGOROUS TECHNICAL AUDITOR using Hierarchical Constraint Satisfaction (HCSP).
 
 ORIGINAL QUERY:
 ${query}
@@ -358,36 +408,67 @@ ${critiquePoints}
 
 ---
 
-YOUR TASK: Vote on whether the synthesis adequately answers the query despite the critique.
+**HIERARCHICAL CONSTRAINT SATISFACTION (HCSP)**
 
-- Vote "synthesis_wins" if:
-  - Critique points are minor, nitpicky, or already addressed in the synthesis
-  - Synthesis provides actionable, useful information for the user
-  - Gaps identified don't significantly hurt usability
+You MUST categorize EACH critique point as either:
 
-- Vote "critique_wins" if:
-  - Critique identifies REAL gaps that hurt usability
-  - Important questions remain unanswered
-  - User cannot take action without the missing information
+**CRITICAL_GAP** (auto-fail conditions):
+- Logic errors or contradictions
+- Hallucinated citations or APIs
+- Code with TODO/FIXME/placeholder
+- Missing numeric values (e.g., "fast" instead of "45ms")
+- Undefined success criteria
+- Missing implementation details that prevent execution
+
+**STYLISTIC_PREFERENCE** (acceptable if synthesis is otherwise good):
+- Tone or formatting preferences
+- Wording choices that don't affect meaning
+- Suggestions for "more examples" when some exist
+- Minor organizational improvements
+
+---
+
+**VOTING RULES:**
+- If ANY critique is a CRITICAL_GAP → vote "critique_wins"
+- If ALL critiques are STYLISTIC_PREFERENCE → vote "synthesis_wins"
+- If no valid critiques exist → vote "synthesis_wins"
 
 Return JSON only:
 {
   "vote": "synthesis_wins" or "critique_wins",
   "reasoning": "One sentence explaining your vote",
-  "critical_gaps": ["gap1", "gap2"]
+  "critiques": [
+    {"type": "CRITICAL_GAP", "issue": "Code contains TODO on line 45"},
+    {"type": "STYLISTIC_PREFERENCE", "issue": "Tone could be more formal"}
+  ]
 }
 
-The critical_gaps array should list the most important gaps IF you vote critique_wins.
-Return empty array [] if you vote synthesis_wins.`.trim();
+The critiques array MUST categorize each critique point. Be rigorous - production quality matters.`.trim();
+}
+
+// HCSP critique types
+export type CritiqueType = 'CRITICAL_GAP' | 'STYLISTIC_PREFERENCE';
+
+export interface CategorizedCritique {
+  type: CritiqueType;
+  issue: string;
+}
+
+export interface ParsedVote {
+  model: string;
+  vote: 'synthesis_wins' | 'critique_wins';
+  reasoning: string;
+  critiques: CategorizedCritique[];
+  hasCriticalGap: boolean;
 }
 
 /**
- * Parse vote response into structured result
+ * Parse vote response into structured result with HCSP categorization
  */
 function parseVoteResponse(
   response: string, 
   model: string
-): { model: string; vote: 'synthesis_wins' | 'critique_wins'; reasoning: string; criticalGaps?: string[] } {
+): ParsedVote {
   try {
     // First try to extract from markdown code block
     const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -399,21 +480,52 @@ function parseVoteResponse(
     }
     
     const parsed = JSON.parse(jsonMatch[0]);
-    const vote = parsed.vote === 'critique_wins' ? 'critique_wins' : 'synthesis_wins';
+    
+    // Parse critiques array with HCSP types
+    const critiques: CategorizedCritique[] = [];
+    if (Array.isArray(parsed.critiques)) {
+      for (const c of parsed.critiques) {
+        if (c && typeof c.issue === 'string') {
+          critiques.push({
+            type: c.type === 'CRITICAL_GAP' ? 'CRITICAL_GAP' : 'STYLISTIC_PREFERENCE',
+            issue: c.issue,
+          });
+        }
+      }
+    }
+    
+    // Legacy support: convert critical_gaps array to CRITICAL_GAP critiques
+    if (Array.isArray(parsed.critical_gaps)) {
+      for (const gap of parsed.critical_gaps) {
+        if (typeof gap === 'string' && gap.length > 0) {
+          critiques.push({ type: 'CRITICAL_GAP', issue: gap });
+        }
+      }
+    }
+    
+    // Check if any critique is a CRITICAL_GAP
+    const hasCriticalGap = critiques.some(c => c.type === 'CRITICAL_GAP');
+    
+    // HCSP rule: if ANY CRITICAL_GAP exists, vote MUST be critique_wins
+    // Override the model's vote if it incorrectly voted synthesis_wins despite critical gaps
+    const vote = hasCriticalGap ? 'critique_wins' : 
+      (parsed.vote === 'critique_wins' ? 'critique_wins' : 'synthesis_wins');
     
     return {
       model,
       vote,
       reasoning: parsed.reasoning || 'No reasoning provided',
-      criticalGaps: Array.isArray(parsed.critical_gaps) ? parsed.critical_gaps : [],
+      critiques,
+      hasCriticalGap,
     };
   } catch (error) {
-    // Default to synthesis_wins on parse failure
+    // Default to synthesis_wins on parse failure (no critiques to evaluate)
     return { 
       model, 
       vote: 'synthesis_wins', 
       reasoning: 'Parse failed, defaulting to synthesis_wins',
-      criticalGaps: [],
+      critiques: [],
+      hasCriticalGap: false,
     };
   }
 }
@@ -490,9 +602,6 @@ export async function runPVRVerification(
   const logicResult = await checkLogicConsistency(sectionClaims, geminiKey);
   if (logicResult.hasConflict) {
     console.error(`[PVR] Logic conflict detected: ${logicResult.conflicts.length} issues`);
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:runPVRVerification:logicConflict',message:'H-F: Logic conflict details',data:{conflicts:logicResult.conflicts,claimsSample:Object.fromEntries(Object.entries(sectionClaims).map(([k,v])=>[k,v.slice(0,3)]))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H-F'})}).catch(()=>{});
-    // #endregion
     result.isConsistent = false;
     // Add logic conflicts as high-severity contradictions
     for (const conflict of logicResult.conflicts) {

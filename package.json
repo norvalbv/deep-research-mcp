@@ -15,7 +15,19 @@
     "prepublishOnly": "npm run build",
     "lint": "biome check --write",
     "lint:fix": "biome check --write",
-    "format": "biome format --write"
+    "format": "biome format --write",
+    "test": "npx vitest run",
+    "test:watch": "npx vitest",
+    "test:pvr": "RUN_LIVE_TESTS=true npx vitest run pvr-verification",
+    "test:hcsp": "npx vitest run semantic-evaluation vote-calibration",
+    "test:coverage": "npx vitest run --coverage",
+    "benchmark": "RUN_LIVE_TESTS=true tsx benchmarks/cli.ts",
+    "benchmark:compare": "RUN_LIVE_TESTS=true tsx benchmarks/cli.ts --compare",
+    "benchmark:full": "RUN_LIVE_TESTS=true SAMPLE_LIMIT=80 tsx benchmarks/cli.ts --compare",
+    "benchmark:generate": "tsx benchmarks/generate-responses.ts",
+    "benchmark:generate:sample": "SAMPLE_LIMIT=5 tsx benchmarks/generate-responses.ts",
+    "calibrate": "tsx benchmarks/calibration.ts",
+    "prepare": "husky"
   },
   "keywords": [
     "mcp",
@@ -52,7 +64,9 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "husky": "^9.1.7",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.3"
   }
 }

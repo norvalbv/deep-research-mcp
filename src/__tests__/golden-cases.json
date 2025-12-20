@@ -1,26 +1,17 @@
 {
   "$schema": "./golden-cases.schema.json",
-  "version": "1.0.0",
-  "description": "Golden test cases for PVR consistency verification. Based on arxiv:2310.03025 and arxiv:2303.16634 (G-Eval).",
+  "version": "2.0.0",
+  "description": "Golden 50 test cases for research synthesis evaluation. Based on arxiv:2310.03025, arxiv:2303.16634 (G-Eval), and HCSP methodology.",
+  "categories": {
+    "happy-path": "Standard queries with clear, non-conflicting data",
+    "edge-case": "Conflicting sources, sparse data, ambiguous queries",
+    "failure-mode": "Known failure patterns that should be detected"
+  },
   "testCases": [
     {
-      "id": "numeric-contradiction-threshold",
-      "description": "Different threshold values across sections",
-      "category": "contradiction",
-      "sections": {
-        "overview": "The recommended threshold is 0.85 based on arxiv:2310.03025.",
-        "q1": "Use a threshold of 0.75 for best results."
-      },
-      "expected": {
-        "isConsistent": false,
-        "minContradictions": 1,
-        "severity": "high"
-      }
-    },
-    {
-      "id": "numeric-consistent-threshold",
+      "id": "hp-01-threshold-consistent",
       "description": "Same threshold value across sections",
-      "category": "consistency",
+      "category": "happy-path",
       "sections": {
         "overview": "The recommended threshold is 0.85 based on research.",
         "q1": "As mentioned, the 0.85 threshold provides optimal balance."
@@ -31,24 +22,9 @@
       }
     },
     {
-      "id": "time-estimate-contradiction",
-      "description": "Contradicting time estimates",
-      "category": "contradiction",
-      "sections": {
-        "overview": "The full implementation takes approximately 20 hours.",
-        "q1": "This phase requires 15 hours.",
-        "q2": "This phase requires 12 hours."
-      },
-      "expected": {
-        "isConsistent": false,
-        "minContradictions": 1,
-        "notes": "15 + 12 = 27 hours but overview says 20 hours"
-      }
-    },
-    {
-      "id": "time-estimate-consistent",
+      "id": "hp-02-time-estimate-consistent",
       "description": "Consistent time estimates that add up",
-      "category": "consistency",
+      "category": "happy-path",
       "sections": {
         "overview": "The full implementation takes approximately 27 hours across three phases.",
         "q1": "Phase 1 requires 10 hours.",
@@ -61,9 +37,202 @@
       }
     },
     {
-      "id": "approach-contradiction",
-      "description": "Contradicting recommendations",
-      "category": "contradiction",
+      "id": "hp-03-approach-consistent",
+      "description": "Consistent approach recommendation",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Use PVR (Parallel-Verify-Resolve) architecture for consistency.",
+        "q1": "The PVR approach maintains 98% consistency at 6x speed."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.85
+      }
+    },
+    {
+      "id": "hp-04-library-version-consistent",
+      "description": "Consistent library version across sections",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Use langsmith>=0.1.0 for dataset management.",
+        "q1": "Install langsmith 0.1.0 or higher for this feature."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.85
+      }
+    },
+    {
+      "id": "hp-05-latency-requirement-consistent",
+      "description": "Consistent latency requirements",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Target p95 latency under 200ms.",
+        "q1": "The verification step must complete in under 200ms at p95."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.85
+      }
+    },
+    {
+      "id": "hp-06-retry-logic-consistent",
+      "description": "Consistent retry configuration",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Use 3 retries with exponential backoff.",
+        "q1": "Configure max_retries=3 with exponential backoff starting at 1s."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.85
+      }
+    },
+    {
+      "id": "hp-07-citation-alignment",
+      "description": "Citations match across sections",
+      "category": "happy-path",
+      "sections": {
+        "overview": "As shown in arxiv:2310.03025, the threshold is 0.85.",
+        "q1": "Research [arxiv:2310.03025] confirms 0.85 as optimal."
+      },
+      "expected": {
+        "isConsistent": true,
+        "entailmentScoreMin": 0.9
+      }
+    },
+    {
+      "id": "hp-08-code-example-consistent",
+      "description": "Code examples use same API across sections",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Use the callLLM function with provider and model options.\n\n```typescript\nconst response = await callLLM(prompt, { provider: 'gemini', model: 'gemini-3-flash-preview' });\n```",
+        "q1": "For synthesis, configure callLLM as follows:\n\n```typescript\nawait callLLM(synthesisPrompt, { provider: 'gemini', model: 'gemini-3-flash-preview', timeout: 60000 });\n```"
+      },
+      "expected": {
+        "isConsistent": true
+      }
+    },
+    {
+      "id": "hp-09-database-consistent",
+      "description": "Database recommendation consistent",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Store research results in PostgreSQL with JSONB columns.",
+        "q1": "The PostgreSQL database should use JSONB for flexible schema."
+      },
+      "expected": {
+        "isConsistent": true
+      }
+    },
+    {
+      "id": "hp-10-model-consistent",
+      "description": "Model recommendation consistent",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Use GPT-4o-mini for cost-effective evaluation.",
+        "q1": "The judge model should be GPT-4o-mini for balance of quality and cost."
+      },
+      "expected": {
+        "isConsistent": true
+      }
+    },
+    {
+      "id": "hp-11-metric-consistent",
+      "description": "Success metrics consistent",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Target CCR > 90% and Citation Fidelity > 95%.",
+        "q1": "Constraint Coverage Ratio must exceed 90%.",
+        "q2": "Citation Fidelity should be above 95%."
+      },
+      "expected": {
+        "isConsistent": true
+      }
+    },
+    {
+      "id": "hp-12-architecture-consistent",
+      "description": "Architecture recommendation consistent",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Implement using microservices with async message passing.",
+        "q1": "Each service communicates via async messages.",
+        "q2": "The microservice architecture enables independent scaling."
+      },
+      "expected": {
+        "isConsistent": true
+      }
+    },
+    {
+      "id": "hp-13-error-handling-consistent",
+      "description": "Error handling approach consistent",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Use try-catch with exponential backoff for API calls.",
+        "q1": "Wrap API calls in try-catch blocks with backoff retry."
+      },
+      "expected": {
+        "isConsistent": true
+      }
+    },
+    {
+      "id": "hp-14-testing-strategy-consistent",
+      "description": "Testing strategy consistent",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Use Vitest for unit tests and mock LLM responses.",
+        "q1": "Vitest provides excellent TypeScript support for testing.",
+        "q2": "Mock LLM responses for deterministic tests."
+      },
+      "expected": {
+        "isConsistent": true
+      }
+    },
+    {
+      "id": "hp-15-deployment-consistent",
+      "description": "Deployment strategy consistent",
+      "category": "happy-path",
+      "sections": {
+        "overview": "Deploy to Vercel with edge functions for low latency.",
+        "q1": "Vercel edge functions provide sub-100ms cold starts."
+      },
+      "expected": {
+        "isConsistent": true
+      }
+    },
+    {
+      "id": "ec-01-numeric-contradiction-threshold",
+      "description": "Different threshold values across sections",
+      "category": "edge-case",
+      "sections": {
+        "overview": "The recommended threshold is 0.85 based on arxiv:2310.03025.",
+        "q1": "Use a threshold of 0.75 for best results."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "high"
+      }
+    },
+    {
+      "id": "ec-02-time-estimate-contradiction",
+      "description": "Contradicting time estimates that don't add up",
+      "category": "edge-case",
+      "sections": {
+        "overview": "The full implementation takes approximately 20 hours.",
+        "q1": "This phase requires 15 hours.",
+        "q2": "This phase requires 12 hours."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "notes": "15 + 12 = 27 hours but overview says 20 hours"
+      }
+    },
+    {
+      "id": "ec-03-approach-contradiction",
+      "description": "Contradicting processing recommendations",
+      "category": "edge-case",
       "sections": {
         "overview": "Use sequential processing for best accuracy.",
         "q1": "Parallel processing is strongly recommended for this use case."
@@ -75,22 +244,9 @@
       }
     },
     {
-      "id": "approach-consistent",
-      "description": "Consistent approach recommendation",
-      "category": "consistency",
-      "sections": {
-        "overview": "Use PVR (Parallel-Verify-Resolve) architecture for consistency.",
-        "q1": "The PVR approach maintains 98% consistency at 6x speed."
-      },
-      "expected": {
-        "isConsistent": true,
-        "entailmentScoreMin": 0.85
-      }
-    },
-    {
-      "id": "model-version-contradiction",
+      "id": "ec-04-model-version-contradiction",
       "description": "Different model versions specified",
-      "category": "contradiction",
+      "category": "edge-case",
       "sections": {
         "overview": "Use GPT-4 for synthesis tasks.",
         "q1": "GPT-3.5 is sufficient for this task."
@@ -102,9 +258,9 @@
       }
     },
     {
-      "id": "cost-estimate-contradiction",
+      "id": "ec-05-cost-estimate-contradiction",
       "description": "Contradicting cost estimates",
-      "category": "contradiction",
+      "category": "edge-case",
       "sections": {
         "overview": "Total cost is approximately $500.",
         "q1": "API costs will be around $300.",
@@ -117,22 +273,9 @@
       }
     },
     {
-      "id": "library-version-consistent",
-      "description": "Consistent library version across sections",
-      "category": "consistency",
-      "sections": {
-        "overview": "Use langsmith>=0.1.0 for dataset management.",
-        "q1": "Install langsmith 0.1.0 or higher for this feature."
-      },
-      "expected": {
-        "isConsistent": true,
-        "entailmentScoreMin": 0.85
-      }
-    },
-    {
-      "id": "accuracy-metric-contradiction",
+      "id": "ec-06-accuracy-metric-contradiction",
       "description": "Different accuracy targets",
-      "category": "contradiction",
+      "category": "edge-case",
       "sections": {
         "overview": "Target 95% accuracy for production deployment.",
         "q1": "An accuracy of 85% is acceptable for this use case."
@@ -144,22 +287,9 @@
       }
     },
     {
-      "id": "latency-requirement-consistent",
-      "description": "Consistent latency requirements",
-      "category": "consistency",
-      "sections": {
-        "overview": "Target p95 latency under 200ms.",
-        "q1": "The verification step must complete in under 200ms at p95."
-      },
-      "expected": {
-        "isConsistent": true,
-        "entailmentScoreMin": 0.85
-      }
-    },
-    {
-      "id": "database-recommendation-contradiction",
+      "id": "ec-07-database-recommendation-contradiction",
       "description": "Contradicting database recommendations",
-      "category": "contradiction",
+      "category": "edge-case",
       "sections": {
         "overview": "Use PostgreSQL for relational data storage.",
         "q1": "MongoDB is the best choice for this data model."
@@ -171,22 +301,9 @@
       }
     },
     {
-      "id": "retry-logic-consistent",
-      "description": "Consistent retry configuration",
-      "category": "consistency",
-      "sections": {
-        "overview": "Use 3 retries with exponential backoff.",
-        "q1": "Configure max_retries=3 with exponential backoff starting at 1s."
-      },
-      "expected": {
-        "isConsistent": true,
-        "entailmentScoreMin": 0.85
-      }
-    },
-    {
-      "id": "test-size-contradiction",
+      "id": "ec-08-test-size-contradiction",
       "description": "Contradicting test dataset sizes",
-      "category": "contradiction",
+      "category": "edge-case",
       "sections": {
         "overview": "A minimum of 500 test examples is required.",
         "q1": "200 examples should be sufficient for evaluation."
@@ -198,7 +315,7 @@
       }
     },
     {
-      "id": "empty-sections",
+      "id": "ec-09-empty-sections",
       "description": "Sections with no extractable claims",
       "category": "edge-case",
       "sections": {
@@ -211,7 +328,7 @@
       }
     },
     {
-      "id": "single-section",
+      "id": "ec-10-single-section",
       "description": "Only one section with claims",
       "category": "edge-case",
       "sections": {
@@ -223,9 +340,9 @@
       }
     },
     {
-      "id": "minor-wording-difference",
+      "id": "ec-11-minor-wording-difference",
       "description": "Same meaning with different wording",
-      "category": "consistency",
+      "category": "edge-case",
       "sections": {
         "overview": "The system achieves high accuracy.",
         "q1": "Accuracy levels are excellent."
@@ -236,18 +353,346 @@
       }
     },
     {
-      "id": "citation-alignment",
-      "description": "Citations should match across sections",
-      "category": "consistency",
+      "id": "ec-12-or-vs-and-logic",
+      "description": "OR vs AND logic contradiction",
+      "category": "edge-case",
       "sections": {
-        "overview": "As shown in arxiv:2310.03025, the threshold is 0.85.",
-        "q1": "Research [arxiv:2310.03025] confirms 0.85 as optimal."
+        "overview": "Entity promoted if recurrence >= 3 OR salience > 0.80.",
+        "q1": "Both recurrence and salience gates must be passed for promotion."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "high",
+        "notes": "OR logic vs AND logic is a fundamental contradiction"
+      }
+    },
+    {
+      "id": "ec-13-conflicting-sources",
+      "description": "Sources cite conflicting information",
+      "category": "edge-case",
+      "sections": {
+        "overview": "According to [arxiv:2310.03025], the optimal batch size is 32.",
+        "q1": "Research [arxiv:2305.14251] recommends batch size of 64."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "medium",
+        "notes": "Different papers recommend different values"
+      }
+    },
+    {
+      "id": "ec-14-implicit-contradiction",
+      "description": "Implicit contradiction in recommendations",
+      "category": "edge-case",
+      "sections": {
+        "overview": "Optimize for latency in production.",
+        "q1": "Use batch processing to maximize throughput."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "medium",
+        "notes": "Latency optimization conflicts with batch processing"
+      }
+    },
+    {
+      "id": "ec-15-version-mismatch",
+      "description": "Library version mismatch",
+      "category": "edge-case",
+      "sections": {
+        "overview": "Requires Node.js 18+.",
+        "q1": "Works with Node.js 16 and above."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "medium"
+      }
+    },
+    {
+      "id": "ec-16-ambiguous-range",
+      "description": "Overlapping but unclear ranges",
+      "category": "edge-case",
+      "sections": {
+        "overview": "Response time should be 100-200ms.",
+        "q1": "Aim for under 150ms response time."
       },
       "expected": {
         "isConsistent": true,
-        "entailmentScoreMin": 0.9
+        "notes": "150ms is within 100-200ms range, not a contradiction"
+      }
+    },
+    {
+      "id": "ec-17-conditional-vs-absolute",
+      "description": "Conditional vs absolute statement",
+      "category": "edge-case",
+      "sections": {
+        "overview": "Always use HTTPS in production.",
+        "q1": "Use HTTPS when handling sensitive data."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "medium",
+        "notes": "Always vs conditional usage"
+      }
+    },
+    {
+      "id": "ec-18-scale-contradiction",
+      "description": "Different scale recommendations",
+      "category": "edge-case",
+      "sections": {
+        "overview": "Start with 3 instances for high availability.",
+        "q1": "A single instance is sufficient for most use cases."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "high"
+      }
+    },
+    {
+      "id": "ec-19-caching-contradiction",
+      "description": "Contradicting caching recommendations",
+      "category": "edge-case",
+      "sections": {
+        "overview": "Cache results for 1 hour.",
+        "q1": "Use 24-hour cache TTL for stability."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "medium"
+      }
+    },
+    {
+      "id": "ec-20-auth-contradiction",
+      "description": "Authentication approach contradiction",
+      "category": "edge-case",
+      "sections": {
+        "overview": "Use JWT tokens for authentication.",
+        "q1": "Session-based authentication is more secure."
+      },
+      "expected": {
+        "isConsistent": false,
+        "minContradictions": 1,
+        "severity": "medium"
+      }
+    },
+    {
+      "id": "fm-01-code-with-todo",
+      "description": "Code contains TODO placeholder",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Implementation uses the process_data function:\n\n```python\ndef process_data(data):\n    # TODO: implement actual processing\n    pass\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "code-completeness",
+        "notes": "Code with TODO is not production ready"
+      }
+    },
+    {
+      "id": "fm-02-code-with-fixme",
+      "description": "Code contains FIXME comment",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Error handling:\n\n```typescript\ntry {\n  await apiCall();\n} catch (e) {\n  // FIXME: proper error handling\n  console.log(e);\n}\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "code-completeness",
+        "notes": "FIXME indicates incomplete implementation"
+      }
+    },
+    {
+      "id": "fm-03-undefined-threshold",
+      "description": "Threshold mentioned but not defined",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Set the confidence threshold to an appropriate value based on your needs."
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "specificity",
+        "notes": "No specific numeric value provided"
+      }
+    },
+    {
+      "id": "fm-04-vague-performance",
+      "description": "Vague performance claims without numbers",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "The system is fast and efficient.",
+        "q1": "Response times are good for production use."
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "specificity",
+        "notes": "No numeric performance metrics"
+      }
+    },
+    {
+      "id": "fm-05-missing-success-criteria",
+      "description": "No measurable success criteria defined",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Implement the solution and deploy to production.",
+        "q1": "The system should work well for users."
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "success-criteria",
+        "notes": "No measurable definition of 'done' or success"
+      }
+    },
+    {
+      "id": "fm-06-hallucinated-api",
+      "description": "References non-existent API",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Use the OpenAI client:\n\n```typescript\nimport { SuperFastClient } from 'openai';\nconst client = new SuperFastClient();\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "hallucination",
+        "notes": "SuperFastClient is not a real OpenAI export"
+      }
+    },
+    {
+      "id": "fm-07-placeholder-code",
+      "description": "Code with placeholder values",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Configure the client:\n\n```typescript\nconst config = {\n  apiKey: 'YOUR_API_KEY_HERE',\n  model: 'YOUR_MODEL',\n  timeout: 0 // set appropriate value\n};\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "code-completeness",
+        "notes": "Placeholder values are not executable"
+      }
+    },
+    {
+      "id": "fm-08-arbitrary-magic-number",
+      "description": "Magic number without explanation",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Use a salience score of 0.7.",
+        "q1": "The 0.7 threshold filters low-quality results."
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "specificity",
+        "notes": "No derivation or rubric for why 0.7 was chosen"
+      }
+    },
+    {
+      "id": "fm-09-incomplete-error-handling",
+      "description": "Error handling that swallows errors",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Handle errors gracefully:\n\n```typescript\ntry {\n  await riskyOperation();\n} catch {\n  // ignore errors\n}\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "code-completeness",
+        "notes": "Swallowing errors without logging is a critical gap"
+      }
+    },
+    {
+      "id": "fm-10-missing-type-definitions",
+      "description": "TypeScript code with any types",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Process the response:\n\n```typescript\nfunction processResponse(data: any): any {\n  return data.result;\n}\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "code-completeness",
+        "notes": "Using 'any' defeats TypeScript type safety"
+      }
+    },
+    {
+      "id": "fm-11-undeclared-dependency",
+      "description": "Code references undeclared dependency",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Implementation:\n\n```typescript\nimport { magicHelper } from './utils/magic';\nconst result = magicHelper(data);\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "code-completeness",
+        "notes": "References module that doesn't exist in context"
+      }
+    },
+    {
+      "id": "fm-12-contradicting-code-and-text",
+      "description": "Code contradicts text description",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Use a timeout of 30 seconds:\n\n```typescript\nconst config = { timeout: 5000 }; // 5 second timeout\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "consistency",
+        "notes": "Text says 30s but code shows 5s"
+      }
+    },
+    {
+      "id": "fm-13-missing-required-param",
+      "description": "Function call missing required parameter",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Call the API:\n\n```typescript\n// apiKey is required\nawait callAPI(); // missing apiKey parameter\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "code-completeness",
+        "notes": "Missing required parameter"
+      }
+    },
+    {
+      "id": "fm-14-hardcoded-credentials",
+      "description": "Hardcoded API key in code",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Configure authentication:\n\n```typescript\nconst client = new Client({ apiKey: 'sk-abc123xyz789' });\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "security",
+        "notes": "Never hardcode credentials"
+      }
+    },
+    {
+      "id": "fm-15-deprecated-api",
+      "description": "Uses deprecated API",
+      "category": "failure-mode",
+      "critiqueType": "CRITICAL_GAP",
+      "sections": {
+        "overview": "Legacy implementation:\n\n```typescript\n// @deprecated - use newMethod instead\nawait client.oldMethod();\n```"
+      },
+      "expected": {
+        "isProductionReady": false,
+        "failureType": "code-completeness",
+        "notes": "Using deprecated APIs is not production ready"
       }
     }
   ]
 }
-

@@ -1,0 +1,408 @@
+/**
+ * Validation Pipeline Tests
+ * 
+ * Tests STRUCTURAL aspects that CAN be reliably tested:
+ * - JSON parsing from LLM responses
+ * - Vote aggregation logic
+ * - Citation source validation
+ * 
+ * NOTE: Semantic evaluation (contradiction detection, quality assessment)
+ * should use LLM-as-a-Judge, not regex pattern matching.
+ * 
+ * Run with: npm run test
+ */
+
+import { describe, it, expect } from 'vitest';
+
+// ============================================================================
+// Vote Response Parsing (Structural - parsing LLM JSON output)
+// ============================================================================
+
+/**
+ * Parses vote response from LLM - handles markdown-wrapped JSON
+ */
+export function parseVoteResponse(response: string): {
+  vote: 'synthesis_wins' | 'critique_wins';
+  reasoning: string;
+  criticalGaps?: string[];
+} {
+  try {
+    // Extract JSON from markdown code blocks if present
+    const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const contentToSearch = codeBlockMatch ? codeBlockMatch[1] : response;
+    
+    const jsonMatch = contentToSearch.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('No JSON found');
+    }
+    
+    const parsed = JSON.parse(jsonMatch[0]);
+    
+    return {
+      vote: parsed.vote === 'critique_wins' ? 'critique_wins' : 'synthesis_wins',
+      reasoning: parsed.reasoning || '',
+      criticalGaps: parsed.critical_gaps || parsed.criticalGaps || [],
+    };
+  } catch {
+    return { 
+      vote: 'synthesis_wins', 
+      reasoning: 'Parse failed, defaulting to synthesis_wins',
+      criticalGaps: [],
+    };
+  }
+}
+
+describe('Vote Response Parsing', () => {
+  it('parses plain JSON', () => {
+    const response = '{"vote": "synthesis_wins", "reasoning": "Good answer."}';
+    const result = parseVoteResponse(response);
+    expect(result.vote).toBe('synthesis_wins');
+    expect(result.reasoning).toContain('Good');
+  });
+
+  it('parses markdown-wrapped JSON', () => {
+    const response = `Here is my evaluation:
+
+\`\`\`json
+{
+  "vote": "critique_wins",
+  "reasoning": "Issues found.",
+  "critical_gaps": ["Gap 1", "Gap 2"]
+}
+\`\`\`
+`;
+    const result = parseVoteResponse(response);
+    expect(result.vote).toBe('critique_wins');
+    expect(result.criticalGaps).toHaveLength(2);
+  });
+
+  it('handles code block without language tag', () => {
+    const response = '```\n{"vote": "synthesis_wins", "reasoning": "OK"}\n```';
+    const result = parseVoteResponse(response);
+    expect(result.vote).toBe('synthesis_wins');
+  });
+
+  it('defaults to synthesis_wins on invalid JSON', () => {
+    const response = 'Not valid JSON at all.';
+    const result = parseVoteResponse(response);
+    expect(result.vote).toBe('synthesis_wins');
+    expect(result.reasoning).toContain('Parse failed');
+  });
+
+  it('extracts critical_gaps correctly', () => {
+    const response = `{
+      "vote": "critique_wins",
+      "reasoning": "Problems",
+      "critical_gaps": ["Missing implementation", "Undefined variable"]
+    }`;
+    const result = parseVoteResponse(response);
+    expect(result.criticalGaps).toContain('Missing implementation');
+  });
+});
+
+// ============================================================================
+// HCSP Vote Aggregation (Hierarchical Constraint Satisfaction Protocol)
+// ============================================================================
+
+type CritiqueType = 'CRITICAL_GAP' | 'STYLISTIC_PREFERENCE';
+
+interface CategorizedCritique {
+  type: CritiqueType;
+  issue: string;
+}
+
+interface HCSPVoteDetail {
+  model: string;
+  vote: 'synthesis_wins' | 'critique_wins';
+  reasoning: string;
+  critiques: CategorizedCritique[];
+  hasCriticalGap: boolean;
+}
+
+/**
+ * HCSP Vote Aggregation - Critical gaps override vote count
+ * Rule: If ANY vote has a CRITICAL_GAP, synthesis fails
+ */
+export function aggregateVotesHCSP(votes: HCSPVoteDetail[]): {
+  sufficient: boolean;
+  synthesisWins: number;
+  critiqueWins: number;
+  criticalGaps: string[];
+  stylisticPreferences: string[];
+  hasCriticalGap: boolean;
+} {
+  const synthesisWins = votes.filter(v => v.vote === 'synthesis_wins').length;
+  const critiqueWins = votes.filter(v => v.vote === 'critique_wins').length;
+  
+  // Separate critiques by type
+  const criticalGaps: string[] = [];
+  const stylisticPreferences: string[] = [];
+  
+  for (const vote of votes) {
+    for (const critique of vote.critiques) {
+      if (critique.type === 'CRITICAL_GAP') {
+        criticalGaps.push(critique.issue);
+      } else {
+        stylisticPreferences.push(critique.issue);
+      }
+    }
+  }
+  
+  // Deduplicate
+  const uniqueCriticalGaps = [...new Set(criticalGaps)];
+  const uniqueStylisticPreferences = [...new Set(stylisticPreferences)];
+  
+  // HCSP Rule: ANY critical gap = synthesis fails
+  const hasCriticalGap = uniqueCriticalGaps.length > 0 || votes.some(v => v.hasCriticalGap);
+  const sufficient = hasCriticalGap ? false : (synthesisWins >= critiqueWins);
+  
+  return {
+    sufficient,
+    synthesisWins,
+    critiqueWins,
+    criticalGaps: uniqueCriticalGaps,
+    stylisticPreferences: uniqueStylisticPreferences,
+    hasCriticalGap,
+  };
+}
+
+describe('HCSP Vote Aggregation', () => {
+  it('synthesis wins when all critiques are stylistic', () => {
+    const votes: HCSPVoteDetail[] = [
+      { 
+        model: 'm1', 
+        vote: 'synthesis_wins', 
+        reasoning: 'Good', 
+        critiques: [{ type: 'STYLISTIC_PREFERENCE', issue: 'Could be more formal' }],
+        hasCriticalGap: false,
+      },
+      { 
+        model: 'm2', 
+        vote: 'synthesis_wins', 
+        reasoning: 'OK', 
+        critiques: [],
+        hasCriticalGap: false,
+      },
+    ];
+    const result = aggregateVotesHCSP(votes);
+    expect(result.sufficient).toBe(true);
+    expect(result.hasCriticalGap).toBe(false);
+  });
+
+  it('synthesis FAILS when ANY vote has CRITICAL_GAP (even if minority)', () => {
+    const votes: HCSPVoteDetail[] = [
+      { 
+        model: 'm1', 
+        vote: 'synthesis_wins', 
+        reasoning: 'Good overall', 
+        critiques: [],
+        hasCriticalGap: false,
+      },
+      { 
+        model: 'm2', 
+        vote: 'synthesis_wins', 
+        reasoning: 'Adequate', 
+        critiques: [],
+        hasCriticalGap: false,
+      },
+      { 
+        model: 'm3', 
+        vote: 'synthesis_wins',  // Even voted synthesis_wins!
+        reasoning: 'Minor issues', 
+        critiques: [{ type: 'CRITICAL_GAP', issue: 'Code has TODO placeholder' }],
+        hasCriticalGap: true,
+      },
+    ];
+    const result = aggregateVotesHCSP(votes);
+    // HCSP: Critical gap overrides the 3-0 vote
+    expect(result.sufficient).toBe(false);
+    expect(result.hasCriticalGap).toBe(true);
+    expect(result.criticalGaps).toContain('Code has TODO placeholder');
+  });
+
+  it('separates CRITICAL_GAP from STYLISTIC_PREFERENCE', () => {
+    const votes: HCSPVoteDetail[] = [
+      { 
+        model: 'm1', 
+        vote: 'critique_wins', 
+        reasoning: 'Issues found', 
+        critiques: [
+          { type: 'CRITICAL_GAP', issue: 'Missing success criteria' },
+          { type: 'STYLISTIC_PREFERENCE', issue: 'Verbose explanation' },
+        ],
+        hasCriticalGap: true,
+      },
+      { 
+        model: 'm2', 
+        vote: 'critique_wins', 
+        reasoning: 'Problems', 
+        critiques: [
+          { type: 'CRITICAL_GAP', issue: 'Undefined threshold value' },
+          { type: 'CRITICAL_GAP', issue: 'Missing success criteria' }, // duplicate
+        ],
+        hasCriticalGap: true,
+      },
+    ];
+    const result = aggregateVotesHCSP(votes);
+    expect(result.sufficient).toBe(false);
+    expect(result.criticalGaps).toHaveLength(2); // deduped
+    expect(result.stylisticPreferences).toHaveLength(1);
+    expect(result.criticalGaps).toContain('Missing success criteria');
+    expect(result.criticalGaps).toContain('Undefined threshold value');
+  });
+
+  it('handles production quality test case from README', () => {
+    // Simulates the example from the user's report where critiques were dismissed
+    const votes: HCSPVoteDetail[] = [
+      { 
+        model: 'gemini-1', 
+        vote: 'synthesis_wins', 
+        reasoning: 'Conceptually answers the question', 
+        critiques: [
+          { type: 'CRITICAL_GAP', issue: '[FAILED: Success Criteria] No measurable goal defined' },
+          { type: 'CRITICAL_GAP', issue: '[FAILED: Code Completeness] Functions are hardcoded logic demos' },
+          { type: 'CRITICAL_GAP', issue: '[FAILED: Specificity] Salience 0.7 lacks derivation rubric' },
+        ],
+        hasCriticalGap: true,
+      },
+    ];
+    const result = aggregateVotesHCSP(votes);
+    // With HCSP, these CRITICAL_GAPs should cause failure
+    expect(result.sufficient).toBe(false);
+    expect(result.hasCriticalGap).toBe(true);
+    expect(result.criticalGaps).toHaveLength(3);
+  });
+
+  it('handles empty votes', () => {
+    const result = aggregateVotesHCSP([]);
+    expect(result.sufficient).toBe(true);
+    expect(result.hasCriticalGap).toBe(false);
+  });
+});
+
+// ============================================================================
+// Source Citation Validation (Structural - checking against known list)
+// ============================================================================
+
+/**
+ * Validates that citations reference known/valid sources
+ */
+export function validateSourceCitations(
+  text: string,
+  validSources: { arxivIds: string[]; perplexitySources: string[] }
+): {
+  validCitations: string[];
+  invalidCitations: string[];
+} {
+  const arxivCitations = text.match(/\[arxiv:([\w\d.]+v?\d*)\]/g) || [];
+  const perplexityCitations = text.match(/\[perplexity:(\d+)\]/g) || [];
+  
+  const validCitations: string[] = [];
+  const invalidCitations: string[] = [];
+  
+  for (const citation of arxivCitations) {
+    const id = citation.match(/arxiv:([\w\d.]+v?\d*)/)?.[1] || '';
+    const isValid = validSources.arxivIds.some(
+      validId => validId.includes(id) || id.includes(validId)
+    );
+    if (isValid) {
+      validCitations.push(citation);
+    } else {
+      invalidCitations.push(citation);
+    }
+  }
+  
+  for (const citation of perplexityCitations) {
+    const num = parseInt(citation.match(/perplexity:(\d+)/)?.[1] || '0');
+    if (num > 0 && num <= validSources.perplexitySources.length) {
+      validCitations.push(citation);
+    } else {
+      invalidCitations.push(citation);
+    }
+  }
+  
+  return { validCitations, invalidCitations };
+}
+
+describe('Source Citation Validation', () => {
+  it('validates known arxiv citations', () => {
+    const text = 'According to [arxiv:2309.01431v2], this works.';
+    const validSources = { arxivIds: ['2309.01431v2'], perplexitySources: [] };
+    const result = validateSourceCitations(text, validSources);
+    expect(result.validCitations).toHaveLength(1);
+    expect(result.invalidCitations).toHaveLength(0);
+  });
+
+  it('flags unknown arxiv citations', () => {
+    const text = 'According to [arxiv:fake123], this is hallucinated.';
+    const validSources = { arxivIds: ['2309.01431v2'], perplexitySources: [] };
+    const result = validateSourceCitations(text, validSources);
+    expect(result.invalidCitations).toHaveLength(1);
+  });
+
+  it('validates perplexity citation numbers', () => {
+    const text = '[perplexity:1] and [perplexity:5]';
+    const validSources = { arxivIds: [], perplexitySources: ['u1', 'u2', 'u3'] };
+    const result = validateSourceCitations(text, validSources);
+    expect(result.validCitations).toHaveLength(1); // [perplexity:1]
+    expect(result.invalidCitations).toHaveLength(1); // [perplexity:5] out of range
+  });
+});
+
+// ============================================================================
+// Challenge Response Parsing (Structural)
+// ============================================================================
+
+/**
+ * Parses challenge critique response - extracts FAILED markers
+ */
+export function parseChallengeResponse(content: string): {
+  critiques: string[];
+  hasSignificantGaps: boolean;
+} {
+  const critiques: string[] = [];
+  
+  // Look for [FAILED:...] markers
+  const failedPattern = /\*?\*?\[FAILED[^\]]*\]\*?\*?\s*([^\n]+)/gi;
+  let match;
+  while ((match = failedPattern.exec(content)) !== null) {
+    critiques.push(match[0].trim());
+  }
+  
+  return {
+    critiques,
+    hasSignificantGaps: critiques.length > 0,
+  };
+}
+
+describe('Challenge Response Parsing', () => {
+  it('extracts FAILED markers', () => {
+    const response = `
+**[FAILED: Code]** Missing implementation.
+**[FAILED: Specificity]** No numbers provided.
+`;
+    const result = parseChallengeResponse(response);
+    expect(result.critiques).toHaveLength(2);
+    expect(result.hasSignificantGaps).toBe(true);
+  });
+
+  it('returns empty for no failures', () => {
+    const response = 'Everything looks good. No issues found.';
+    const result = parseChallengeResponse(response);
+    expect(result.critiques).toHaveLength(0);
+    expect(result.hasSignificantGaps).toBe(false);
+  });
+});
+
+// ============================================================================
+// Stub for compatibility - semantic detection requires LLM
+// ============================================================================
+
+export function detectContradictions(_claims: Array<{ section: string; claim: string }>): {
+  contradictions: Array<{ claimA: any; claimB: any; reason: string }>;
+  entailmentScore: number;
+} {
+  // NOTE: Contradiction detection requires LLM-as-a-Judge, not regex.
+  console.warn('detectContradictions: Use LLM-as-a-Judge for semantic evaluation');
+  return { contradictions: [], entailmentScore: 1 };
+}
