@@ -48,7 +48,7 @@ export class ResearchController {
     this.isInitialized = true;
   }
 
-  async execute({ query, enrichedContext, depthLevel, options }: { query: string; enrichedContext: string; depthLevel: ComplexityLevel; options?: ResearchOptions }): Promise<{ 
+  async execute({ query, enrichedContext, depthLevel, options }: { query: string; enrichedContext: string; depthLevel?: ComplexityLevel; options?: ResearchOptions }): Promise<{ 
     markdown: string; 
     result: ResearchResult;
     sections: Record<string, Section>;

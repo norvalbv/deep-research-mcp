@@ -1,0 +1,1715 @@
+{
+  "matrix": {
+    "timestamp": "2025-12-21T16:43:54.927Z",
+    "totalComparisons": 67,
+    "byCategory": [
+      {
+        "category": "synthesis",
+        "totalSamples": 10,
+        "mcpWins": 5,
+        "perplexityWins": 3,
+        "ties": 2,
+        "mcpWinRate": 0.5,
+        "bootstrap": {
+          "lower": -1.3,
+          "upper": 1.15,
+          "mean": -0.000054999999997059354,
+          "isSignificant": false,
+          "pSuperiority": 0.3796
+        },
+        "recommendation": "TIE"
+      },
+      {
+        "category": "code_generation",
+        "totalSamples": 9,
+        "mcpWins": 3,
+        "perplexityWins": 3,
+        "ties": 3,
+        "mcpWinRate": 0.3333333333333333,
+        "bootstrap": {
+          "lower": -1.2222222222222223,
+          "upper": 0.7222222222222222,
+          "mean": -0.212449999999998,
+          "isSignificant": false,
+          "pSuperiority": 0.1431
+        },
+        "recommendation": "TIE"
+      },
+      {
+        "category": "latency",
+        "totalSamples": 10,
+        "mcpWins": 3,
+        "perplexityWins": 4,
+        "ties": 3,
+        "mcpWinRate": 0.3,
+        "bootstrap": {
+          "lower": -0.85,
+          "upper": 0.45,
+          "mean": -0.19622500000000032,
+          "isSignificant": false,
+          "pSuperiority": 0.1734
+        },
+        "recommendation": "TIE"
+      },
+      {
+        "category": "rag_quality",
+        "totalSamples": 10,
+        "mcpWins": 2,
+        "perplexityWins": 4,
+        "ties": 4,
+        "mcpWinRate": 0.2,
+        "bootstrap": {
+          "lower": -1.85,
+          "upper": -0.25,
+          "mean": -1.044674999999974,
+          "isSignificant": true,
+          "pSuperiority": 0.0056
+        },
+        "recommendation": "USE_PERPLEXITY"
+      },
+      {
+        "category": "single_hop_factual",
+        "totalSamples": 9,
+        "mcpWins": 1,
+        "perplexityWins": 5,
+        "ties": 3,
+        "mcpWinRate": 0.1111111111111111,
+        "bootstrap": {
+          "lower": -1.4444444444444444,
+          "upper": -0.1111111111111111,
+          "mean": -0.7781944444444426,
+          "isSignificant": true,
+          "pSuperiority": 0.0303
+        },
+        "recommendation": "USE_PERPLEXITY"
+      },
+      {
+        "category": "multi_hop_reasoning",
+        "totalSamples": 9,
+        "mcpWins": 1,
+        "perplexityWins": 4,
+        "ties": 4,
+        "mcpWinRate": 0.1111111111111111,
+        "bootstrap": {
+          "lower": -2.2222222222222223,
+          "upper": -0.6666666666666666,
+          "mean": -1.5035499999999955,
+          "isSignificant": true,
+          "pSuperiority": 0.0019
+        },
+        "recommendation": "USE_PERPLEXITY"
+      },
+      {
+        "category": "instruction_following",
+        "totalSamples": 10,
+        "mcpWins": 1,
+        "perplexityWins": 7,
+        "ties": 2,
+        "mcpWinRate": 0.1,
+        "bootstrap": {
+          "lower": -2.9,
+          "upper": -0.8,
+          "mean": -1.8463149999999504,
+          "isSignificant": true,
+          "pSuperiority": 0.0002
+        },
+        "recommendation": "USE_PERPLEXITY"
+      }
+    ],
+    "switchingPoints": [
+      "Simple factual lookup: USE PERPLEXITY (faster)",
+      "Code generation: Either (prefer lower cost)"
+    ],
+    "summary": {
+      "mcpStrongCategories": [],
+      "perplexityStrongCategories": [
+        "single_hop_factual",
+        "multi_hop_reasoning",
+        "instruction_following",
+        "rag_quality"
+      ],
+      "tieCategories": [
+        "synthesis",
+        "code_generation",
+        "latency"
+      ]
+    }
+  },
+  "results": [
+    {
+      "sample": {
+        "id": "shf-01",
+        "category": "single_hop_factual",
+        "query": "What is the context window size of GPT-4 Turbo?",
+        "goldStandard": {
+          "answer": "GPT-4 Turbo has a 128K token context window.",
+          "atomicFacts": [
+            "GPT-4 Turbo context window is 128K tokens"
+          ],
+          "sources": [
+            "OpenAI documentation"
+          ]
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Simple factual lookup favors faster systems"
+      },
+      "winner": "tie",
+      "systemScore": 4.5,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "shf-02",
+        "category": "single_hop_factual",
+        "query": "When was the Transformer architecture paper published?",
+        "goldStandard": {
+          "answer": "The 'Attention Is All You Need' paper was published in June 2017.",
+          "atomicFacts": [
+            "Transformer paper published June 2017"
+          ],
+          "sources": [
+            "arxiv:1706.03762"
+          ]
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Direct retrieval task"
+      },
+      "winner": "baseline",
+      "systemScore": 3.5,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "shf-03",
+        "category": "single_hop_factual",
+        "query": "What is the default temperature setting for OpenAI's API?",
+        "goldStandard": {
+          "answer": "The default temperature is 1.0.",
+          "atomicFacts": [
+            "OpenAI API default temperature is 1.0"
+          ],
+          "sources": [
+            "OpenAI API docs"
+          ]
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Simple API documentation lookup"
+      },
+      "winner": "baseline",
+      "systemScore": 3,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "shf-04",
+        "category": "single_hop_factual",
+        "query": "How many parameters does Llama 2 70B have?",
+        "goldStandard": {
+          "answer": "Llama 2 70B has approximately 70 billion parameters.",
+          "atomicFacts": [
+            "Llama 2 70B has 70 billion parameters"
+          ],
+          "sources": [
+            "Meta AI"
+          ]
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Direct factual retrieval"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "shf-05",
+        "category": "single_hop_factual",
+        "query": "What programming language is PyTorch primarily written in?",
+        "goldStandard": {
+          "answer": "PyTorch is primarily written in Python and C++.",
+          "atomicFacts": [
+            "PyTorch written in Python",
+            "PyTorch written in C++"
+          ],
+          "sources": [
+            "PyTorch GitHub"
+          ]
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Simple technical fact"
+      },
+      "winner": "baseline",
+      "systemScore": 4,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "shf-06",
+        "category": "single_hop_factual",
+        "query": "What is the maximum batch size supported by Anthropic's Claude API?",
+        "goldStandard": {
+          "answer": "Claude's batch API supports up to 10,000 requests per batch.",
+          "atomicFacts": [
+            "Claude batch API supports 10,000 requests per batch"
+          ],
+          "sources": [
+            "Anthropic API docs"
+          ]
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "API specification lookup"
+      },
+      "winner": "baseline",
+      "systemScore": 3.5,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "shf-08",
+        "category": "single_hop_factual",
+        "query": "What is the embedding dimension of text-embedding-3-large?",
+        "goldStandard": {
+          "answer": "text-embedding-3-large has 3072 dimensions.",
+          "atomicFacts": [
+            "text-embedding-3-large has 3072 dimensions"
+          ],
+          "sources": [
+            "OpenAI embeddings docs"
+          ]
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Technical specification"
+      },
+      "winner": "baseline",
+      "systemScore": 3,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "shf-09",
+        "category": "single_hop_factual",
+        "query": "What is the default chunk size in LangChain's RecursiveCharacterTextSplitter?",
+        "goldStandard": {
+          "answer": "The default chunk_size is 4000 characters.",
+          "atomicFacts": [
+            "LangChain RecursiveCharacterTextSplitter default chunk_size is 4000"
+          ],
+          "sources": [
+            "LangChain docs"
+          ]
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Library documentation lookup"
+      },
+      "winner": "tie",
+      "systemScore": 4.5,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "shf-10",
+        "category": "single_hop_factual",
+        "query": "What activation function does GPT use?",
+        "goldStandard": {
+          "answer": "GPT uses GELU (Gaussian Error Linear Unit) activation.",
+          "atomicFacts": [
+            "GPT uses GELU activation"
+          ],
+          "sources": [
+            "GPT paper"
+          ]
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Architecture detail"
+      },
+      "winner": "tie",
+      "systemScore": 0,
+      "baselineScore": 0
+    },
+    {
+      "sample": {
+        "id": "mhr-01",
+        "category": "multi_hop_reasoning",
+        "query": "What embedding model should I use if I need the same dimensionality as BERT but better performance on retrieval tasks?",
+        "goldStandard": {
+          "answer": "Use text-embedding-3-small with dimensions=768. BERT uses 768 dimensions, and text-embedding-3-small can be configured to 768 dims while outperforming BERT on MTEB retrieval benchmarks.",
+          "atomicFacts": [
+            "BERT uses 768 dimensions",
+            "text-embedding-3-small supports 768 dimensions",
+            "text-embedding-3-small outperforms BERT on MTEB retrieval"
+          ],
+          "sources": [
+            "OpenAI docs",
+            "MTEB leaderboard"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Requires connecting BERT specs with embedding model capabilities and benchmarks"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "mhr-02",
+        "category": "multi_hop_reasoning",
+        "query": "If I'm building a RAG system that needs to handle 50K token documents, which combination of embedding model and LLM would minimize costs while maintaining quality?",
+        "goldStandard": {
+          "answer": "Use text-embedding-3-small ($0.02/1M tokens) for embeddings with chunking, paired with GPT-4o-mini for generation. GPT-4o-mini supports 128K context at $0.15/1M input tokens, making it 20x cheaper than GPT-4 Turbo for long documents.",
+          "atomicFacts": [
+            "text-embedding-3-small costs $0.02/1M tokens",
+            "GPT-4o-mini supports 128K context",
+            "GPT-4o-mini costs $0.15/1M input tokens",
+            "GPT-4o-mini is 20x cheaper than GPT-4 Turbo"
+          ],
+          "sources": [
+            "OpenAI pricing",
+            "Model specs"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Multi-hop: document size -> context requirements -> cost optimization"
+      },
+      "winner": "tie",
+      "systemScore": 2.5,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "mhr-03",
+        "category": "multi_hop_reasoning",
+        "query": "What is the maximum effective context length for Llama 3 when using RoPE scaling, and how does this compare to Claude 3?",
+        "goldStandard": {
+          "answer": "Llama 3 can extend to ~65K tokens with RoPE scaling (base 8K x 8). Claude 3 Opus natively supports 200K tokens without scaling, making Claude better for very long contexts while Llama 3 with RoPE is more cost-effective for 32-65K range.",
+          "atomicFacts": [
+            "Llama 3 base context is 8K tokens",
+            "RoPE scaling extends Llama 3 to ~65K tokens",
+            "Claude 3 Opus supports 200K tokens natively",
+            "Claude better for >65K contexts"
+          ],
+          "sources": [
+            "Meta AI",
+            "Anthropic docs",
+            "RoPE paper"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Requires connecting RoPE mechanics, Llama specs, and Claude comparison"
+      },
+      "winner": "tie",
+      "systemScore": 2.5,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "mhr-04",
+        "category": "multi_hop_reasoning",
+        "query": "For a financial document QA system requiring 99.9% factual accuracy, what combination of retrieval and verification approaches should I use?",
+        "goldStandard": {
+          "answer": "Use hybrid retrieval (BM25 + dense embeddings) with a multi-stage verification pipeline: 1) NLI verification using DeBERTa-v3 for each claim, 2) Citation grounding check, 3) Numeric consistency validation. Target CCR >95% and Citation Fidelity >99%.",
+          "atomicFacts": [
+            "Use hybrid retrieval (BM25 + dense)",
+            "Use DeBERTa-v3 for NLI verification",
+            "Implement citation grounding check",
+            "Target CCR >95%",
+            "Target Citation Fidelity >99%"
+          ],
+          "sources": [
+            "arxiv:2309.15217",
+            "arxiv:2203.05115"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Complex multi-hop: accuracy requirement -> retrieval strategy -> verification pipeline"
+      },
+      "winner": "baseline",
+      "systemScore": 2,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "mhr-05",
+        "category": "multi_hop_reasoning",
+        "query": "What chunking strategy should I use for technical documentation if my embedding model has 512 token limit but I need to preserve code block context?",
+        "goldStandard": {
+          "answer": "Use semantic chunking with code-aware splitting: 1) Detect code blocks and treat as atomic units, 2) Use RecursiveCharacterTextSplitter with separators prioritizing markdown headers and code fences, 3) Set chunk_size=400, overlap=50 to stay under 512 limit with buffer for special tokens.",
+          "atomicFacts": [
+            "Use semantic chunking",
+            "Treat code blocks as atomic units",
+            "Use RecursiveCharacterTextSplitter",
+            "Prioritize markdown headers and code fences",
+            "chunk_size=400 with overlap=50"
+          ],
+          "sources": [
+            "LangChain docs",
+            "RAG best practices"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Multi-hop: embedding limit -> code preservation -> chunking strategy"
+      },
+      "winner": "baseline",
+      "systemScore": 2,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "mhr-06",
+        "category": "multi_hop_reasoning",
+        "query": "If fine-tuning GPT-4o costs $25/1M training tokens and I have 10K examples of 500 tokens each, what's the minimum epochs needed to see improvement on instruction following, and what would it cost?",
+        "goldStandard": {
+          "answer": "10K examples x 500 tokens = 5M tokens. Research suggests 2-3 epochs for instruction following tasks. Cost: 5M x 3 epochs x $25/1M = $375. However, consider that GPT-4o may already perform well on instruction following, so validate with IFEval benchmark first.",
+          "atomicFacts": [
+            "10K x 500 = 5M training tokens",
+            "2-3 epochs needed for instruction following",
+            "Cost is ~$375 for 3 epochs",
+            "Validate with IFEval benchmark first"
+          ],
+          "sources": [
+            "OpenAI fine-tuning docs",
+            "arxiv:2311.07911"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Multi-hop: training data size -> epoch requirements -> cost calculation"
+      },
+      "winner": "baseline",
+      "systemScore": 3,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "mhr-07",
+        "category": "multi_hop_reasoning",
+        "query": "What's the tradeoff between using a reranker vs just increasing top-k in retrieval for a latency-sensitive application?",
+        "goldStandard": {
+          "answer": "Increasing top-k from 5 to 20 adds ~10-20ms latency but may include noise. A cross-encoder reranker like ms-marco-MiniLM adds ~50-100ms but improves precision by 15-20%. For latency <200ms target: use top-k=10 without reranker. For accuracy-critical: use top-k=20 with reranker, accept ~150ms total.",
+          "atomicFacts": [
+            "Increasing top-k adds 10-20ms latency",
+            "Higher top-k may include noise",
+            "Cross-encoder reranker adds 50-100ms",
+            "Reranker improves precision by 15-20%",
+            "Latency target <200ms: skip reranker"
+          ],
+          "sources": [
+            "BEIR benchmark",
+            "Sentence-transformers docs"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Multi-hop: latency constraints -> retrieval options -> accuracy tradeoffs"
+      },
+      "winner": "baseline",
+      "systemScore": 2,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "mhr-08",
+        "category": "multi_hop_reasoning",
+        "query": "How should I implement rate limiting for an LLM API that has both RPM and TPM limits, when my requests vary from 100 to 10K tokens?",
+        "goldStandard": {
+          "answer": "Implement dual token bucket algorithm: 1) RPM bucket with capacity=limit, refill=limit/60 per second, 2) TPM bucket with capacity=limit, refill=limit/60 per second. Before each request, check both buckets: wait if RPM bucket <1 OR TPM bucket < estimated_tokens. Use exponential backoff (2^n seconds, max 32s) on 429 errors.",
+          "atomicFacts": [
+            "Use dual token bucket algorithm",
+            "RPM bucket refills at limit/60 per second",
+            "TPM bucket refills at limit/60 per second",
+            "Check both buckets before each request",
+            "Use exponential backoff on 429"
+          ],
+          "sources": [
+            "OpenAI rate limits",
+            "Token bucket algorithm"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Multi-hop: variable request sizes -> dual limits -> implementation strategy"
+      },
+      "winner": "tie",
+      "systemScore": 3,
+      "baselineScore": 3.5
+    },
+    {
+      "sample": {
+        "id": "mhr-10",
+        "category": "multi_hop_reasoning",
+        "query": "If I need to maintain conversation history for 100 concurrent users with 20K token average context, what's the most cost-effective caching strategy?",
+        "goldStandard": {
+          "answer": "100 users x 20K tokens = 2M tokens active context. Options: 1) Redis with msgpack serialization (~$50/month for 2GB), 2) KV cache in Cloudflare Workers ($5/10M reads). For LLM, use prompt caching (50% discount on cached tokens). Implement sliding window to keep only last 16K tokens, summarize older context.",
+          "atomicFacts": [
+            "Total active context is 2M tokens",
+            "Redis option ~$50/month",
+            "Cloudflare KV option ~$5/10M reads",
+            "Prompt caching gives 50% discount",
+            "Use sliding window with 16K limit"
+          ],
+          "sources": [
+            "Redis pricing",
+            "Cloudflare pricing",
+            "OpenAI prompt caching"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Multi-hop: user count -> memory requirements -> caching strategy -> cost"
+      },
+      "winner": "tie",
+      "systemScore": 4,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "syn-01",
+        "category": "synthesis",
+        "query": "Compare the major approaches to RAG evaluation and recommend which metrics to use for a production system.",
+        "goldStandard": {
+          "answer": "Three main approaches: 1) RAGAS (context relevance, faithfulness, answer relevance) - good for automated testing, 2) RGB framework (noise robustness, negative rejection, counterfactual) - tests edge cases, 3) ARES (LLM-as-judge with confidence calibration) - correlates with human judgment. For production: use RAGAS for CI/CD, RGB for regression testing, human eval sample for calibration. Target: Faithfulness >0.9, Context Relevance >0.8.",
+          "atomicFacts": [
+            "RAGAS measures context relevance, faithfulness, answer relevance",
+            "RGB tests noise robustness, negative rejection, counterfactual",
+            "ARES uses LLM-as-judge with confidence calibration",
+            "Use RAGAS for CI/CD",
+            "Use RGB for regression testing",
+            "Target Faithfulness >0.9"
+          ],
+          "sources": [
+            "arxiv:2309.15217",
+            "arxiv:2309.01431",
+            "arxiv:2311.09476"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Synthesis across multiple evaluation frameworks"
+      },
+      "winner": "baseline",
+      "systemScore": 3.5,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "syn-02",
+        "category": "synthesis",
+        "query": "What are the current best practices for LLM output validation in production systems?",
+        "goldStandard": {
+          "answer": "Multi-layer validation: 1) Structural - JSON schema validation, regex for format, 2) Semantic - NLI entailment check against sources (DeBERTa-v3), fact extraction and verification, 3) Safety - content filtering, PII detection, 4) Consistency - PVR (Parallel-Verify-Resolve) for multi-source synthesis. Implement as pipeline with early termination on critical failures. Log all validation results for continuous improvement.",
+          "atomicFacts": [
+            "Structural validation includes JSON schema and regex",
+            "Semantic validation uses NLI entailment",
+            "Use DeBERTa-v3 for NLI",
+            "Safety layer includes PII detection",
+            "PVR for consistency checking",
+            "Early termination on critical failures"
+          ],
+          "sources": [
+            "Production ML practices",
+            "arxiv:2203.05115"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Synthesis of validation approaches across multiple concerns"
+      },
+      "winner": "baseline",
+      "systemScore": 1,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "syn-03",
+        "category": "synthesis",
+        "query": "Summarize the evolution of context length handling in LLMs from GPT-3 to current models.",
+        "goldStandard": {
+          "answer": "Evolution: GPT-3 (2K) -> GPT-3.5 (4K, then 16K) -> GPT-4 (8K, then 32K, then 128K Turbo) -> Claude (100K -> 200K) -> Gemini (1M). Key innovations: 1) RoPE (rotary embeddings) enabled extrapolation, 2) ALiBi for length generalization, 3) Sliding window attention (Mistral), 4) Ring attention for distributed long context. Tradeoff: longer context = higher cost and potential attention dilution.",
+          "atomicFacts": [
+            "GPT-3 had 2K context",
+            "GPT-4 Turbo has 128K context",
+            "Claude 3 has 200K context",
+            "Gemini has 1M context",
+            "RoPE enables extrapolation",
+            "Longer context increases cost"
+          ],
+          "sources": [
+            "Model release notes",
+            "arxiv:2104.09864",
+            "arxiv:2308.16137"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Historical synthesis across model generations"
+      },
+      "winner": "system",
+      "systemScore": 4,
+      "baselineScore": 3
+    },
+    {
+      "sample": {
+        "id": "syn-04",
+        "category": "synthesis",
+        "query": "What are the tradeoffs between different vector database options for RAG systems?",
+        "goldStandard": {
+          "answer": "Options analysis: 1) Pinecone - managed, serverless, $70/1M vectors, best for startups, 2) Weaviate - hybrid search built-in, good for complex queries, 3) Qdrant - best performance/cost ratio, self-hosted or cloud, 4) pgvector - use existing Postgres, good for <1M vectors, 5) Chroma - dev-friendly, in-process. Decision matrix: <100K vectors -> pgvector or Chroma, 100K-10M -> Qdrant or Weaviate, >10M -> Pinecone or Qdrant distributed.",
+          "atomicFacts": [
+            "Pinecone costs ~$70/1M vectors",
+            "Weaviate has built-in hybrid search",
+            "Qdrant has best performance/cost ratio",
+            "pgvector good for <1M vectors",
+            "Chroma is dev-friendly",
+            "<100K vectors use pgvector or Chroma"
+          ],
+          "sources": [
+            "Vector DB benchmarks",
+            "Pricing pages"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Synthesis of multiple database options with tradeoffs"
+      },
+      "winner": "tie",
+      "systemScore": 4,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "syn-05",
+        "category": "synthesis",
+        "query": "What are the key findings from recent research on reducing LLM hallucinations?",
+        "goldStandard": {
+          "answer": "Key findings: 1) Retrieval grounding reduces hallucinations by 40-60% (RAG), 2) Chain-of-verification (CoVe) detects self-inconsistencies, 3) Constrained decoding limits vocabulary to source terms, 4) Self-consistency (sample multiple, vote) improves factuality, 5) Fine-tuning on verified facts helps but doesn't eliminate issue. Most effective: combine RAG + CoVe + citation requirements. Open problem: models still confident when wrong.",
+          "atomicFacts": [
+            "RAG reduces hallucinations 40-60%",
+            "Chain-of-verification detects self-inconsistencies",
+            "Constrained decoding limits to source terms",
+            "Self-consistency improves factuality",
+            "Combine RAG + CoVe + citations",
+            "Models remain confident when wrong"
+          ],
+          "sources": [
+            "arxiv:2309.11495",
+            "arxiv:2212.09561",
+            "arxiv:2203.11171"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Research synthesis across hallucination mitigation techniques"
+      },
+      "winner": "baseline",
+      "systemScore": 2,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "syn-06",
+        "category": "synthesis",
+        "query": "Compare instruction tuning methods and when to use each.",
+        "goldStandard": {
+          "answer": "Methods: 1) SFT (Supervised Fine-Tuning) - basic, needs 1K-10K examples, 2) RLHF - aligns with human preferences, expensive, 3) DPO (Direct Preference Optimization) - simpler than RLHF, similar results, 4) ORPO - combines SFT+preference in one step. Use cases: SFT for format/style, DPO for preference alignment, RLHF for safety-critical. Cost: SFT < DPO < ORPO < RLHF. Recommendation: Start with SFT, add DPO if preference matters.",
+          "atomicFacts": [
+            "SFT needs 1K-10K examples",
+            "RLHF is expensive but effective",
+            "DPO is simpler than RLHF with similar results",
+            "ORPO combines SFT and preference",
+            "Use SFT for format/style",
+            "Start with SFT then add DPO"
+          ],
+          "sources": [
+            "arxiv:2305.18290",
+            "arxiv:2402.01306",
+            "arxiv:2310.12036"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Synthesis of instruction tuning approaches"
+      },
+      "winner": "system",
+      "systemScore": 4.5,
+      "baselineScore": 3
+    },
+    {
+      "sample": {
+        "id": "syn-07",
+        "category": "synthesis",
+        "query": "What monitoring and observability should be implemented for production LLM applications?",
+        "goldStandard": {
+          "answer": "Layers: 1) Operational - latency p50/p95/p99, token usage, error rates, cost tracking, 2) Quality - output validation pass rate, hallucination detection, user feedback correlation, 3) Drift - embedding drift detection, prompt template effectiveness over time, 4) Security - PII leakage monitoring, prompt injection attempts. Tools: LangSmith for tracing, custom dashboards for metrics. Alert on: latency >2x baseline, error rate >1%, cost anomalies >20%.",
+          "atomicFacts": [
+            "Track latency p50/p95/p99",
+            "Monitor token usage and cost",
+            "Track output validation pass rate",
+            "Detect embedding drift",
+            "Monitor PII leakage",
+            "Use LangSmith for tracing",
+            "Alert on latency >2x baseline"
+          ],
+          "sources": [
+            "MLOps best practices",
+            "LangSmith docs"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Synthesis of observability concerns"
+      },
+      "winner": "system",
+      "systemScore": 4.5,
+      "baselineScore": 3
+    },
+    {
+      "sample": {
+        "id": "syn-08",
+        "category": "synthesis",
+        "query": "What are the emerging patterns for multi-agent LLM systems?",
+        "goldStandard": {
+          "answer": "Patterns: 1) Supervisor - central coordinator delegates to specialists, 2) Debate - agents argue, judge decides, improves reasoning, 3) Workflow - DAG of specialized agents, 4) Swarm - emergent coordination, less predictable. Frameworks: AutoGen (Microsoft), CrewAI, LangGraph. Challenges: cost multiplication (N agents = Nx cost), coordination overhead, debugging complexity. Best practice: start with 2-3 agents, add only if measurable improvement.",
+          "atomicFacts": [
+            "Supervisor pattern uses central coordinator",
+            "Debate pattern improves reasoning",
+            "Workflow uses DAG of specialists",
+            "Swarm has emergent coordination",
+            "AutoGen, CrewAI, LangGraph are frameworks",
+            "N agents = Nx cost",
+            "Start with 2-3 agents"
+          ],
+          "sources": [
+            "arxiv:2308.08155",
+            "Framework docs"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Synthesis of multi-agent patterns"
+      },
+      "winner": "system",
+      "systemScore": 4.5,
+      "baselineScore": 3
+    },
+    {
+      "sample": {
+        "id": "syn-09",
+        "category": "synthesis",
+        "query": "What are the best practices for prompt engineering in 2024?",
+        "goldStandard": {
+          "answer": "Key practices: 1) Structured output (JSON mode, function calling) over free-form, 2) Few-shot > zero-shot for complex tasks (3-5 examples optimal), 3) Chain-of-thought for reasoning tasks, 4) System prompts for persistent behavior, 5) XML/markdown tags for section delineation. Anti-patterns: excessive length (diminishing returns >2K tokens), conflicting instructions, vague success criteria. Testing: maintain prompt test suites, version control prompts.",
+          "atomicFacts": [
+            "Use structured output over free-form",
+            "Few-shot with 3-5 examples optimal",
+            "Chain-of-thought for reasoning",
+            "Use system prompts for persistent behavior",
+            "XML/markdown tags for sections",
+            "Diminishing returns >2K tokens",
+            "Version control prompts"
+          ],
+          "sources": [
+            "Anthropic prompt guide",
+            "OpenAI best practices"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Synthesis of prompt engineering practices"
+      },
+      "winner": "tie",
+      "systemScore": 4.5,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "syn-10",
+        "category": "synthesis",
+        "query": "Compare the major LLM API providers on reliability and uptime.",
+        "goldStandard": {
+          "answer": "Comparison: OpenAI - 99.9% SLA (enterprise), occasional capacity issues during peaks, best model variety. Anthropic - no public SLA, generally stable, slower to add features. Google (Vertex AI) - 99.9% SLA, enterprise-grade, complex pricing. AWS Bedrock - 99.9% SLA, multi-provider access, higher latency. Recommendation: primary + fallback strategy (e.g., OpenAI primary, Anthropic fallback). Monitor via status pages and synthetic checks.",
+          "atomicFacts": [
+            "OpenAI has 99.9% SLA for enterprise",
+            "OpenAI has occasional capacity issues",
+            "Anthropic has no public SLA",
+            "Vertex AI has 99.9% SLA",
+            "AWS Bedrock has higher latency",
+            "Use primary + fallback strategy"
+          ],
+          "sources": [
+            "Provider SLA pages",
+            "Status page history"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Synthesis of provider comparison"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 2.5
+    },
+    {
+      "sample": {
+        "id": "cg-01",
+        "category": "code_generation",
+        "query": "Write a Python function to implement exponential backoff with jitter for API retries.",
+        "goldStandard": {
+          "answer": "```python\nimport random\nimport time\nfrom typing import TypeVar, Callable\n\nT = TypeVar('T')\n\ndef retry_with_backoff(\n    func: Callable[[], T],\n    max_retries: int = 3,\n    base_delay: float = 1.0,\n    max_delay: float = 32.0,\n    jitter: bool = True\n) -> T:\n    for attempt in range(max_retries + 1):\n        try:\n            return func()\n        except Exception as e:\n            if attempt == max_retries:\n                raise\n            delay = min(base_delay * (2 ** attempt), max_delay)\n            if jitter:\n                delay *= (0.5 + random.random())\n            time.sleep(delay)\n```",
+          "atomicFacts": [
+            "Uses exponential backoff formula",
+            "Includes jitter option",
+            "Has max_delay cap",
+            "Generic return type",
+            "Raises on final failure"
+          ],
+          "sources": [
+            "AWS retry best practices"
+          ]
+        },
+        "expectedWinner": "tie",
+        "rationale": "Both can generate quality code for standard patterns"
+      },
+      "winner": "baseline",
+      "systemScore": 3,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "cg-02",
+        "category": "code_generation",
+        "query": "Write TypeScript code to implement a token bucket rate limiter for LLM API calls.",
+        "goldStandard": {
+          "answer": "```typescript\nclass TokenBucket {\n  private tokens: number;\n  private lastRefill: number;\n  constructor(\n    private capacity: number,\n    private refillRate: number // tokens per second\n  ) {\n    this.tokens = capacity;\n    this.lastRefill = Date.now();\n  }\n  \n  async acquire(cost: number = 1): Promise<void> {\n    this.refill();\n    while (this.tokens < cost) {\n      const waitTime = ((cost - this.tokens) / this.refillRate) * 1000;\n      await new Promise(r => setTimeout(r, waitTime));\n      this.refill();\n    }\n    this.tokens -= cost;\n  }\n  \n  private refill(): void {\n    const now = Date.now();\n    const elapsed = (now - this.lastRefill) / 1000;\n    this.tokens = Math.min(this.capacity, this.tokens + elapsed * this.refillRate);\n    this.lastRefill = now;\n  }\n}\n```",
+          "atomicFacts": [
+            "Implements token bucket algorithm",
+            "Supports variable cost acquisition",
+            "Auto-refills based on time",
+            "Async wait for tokens",
+            "Caps at capacity"
+          ],
+          "sources": [
+            "Rate limiting patterns"
+          ]
+        },
+        "expectedWinner": "tie",
+        "rationale": "Standard algorithm implementation"
+      },
+      "winner": "system",
+      "systemScore": 3.5,
+      "baselineScore": 3
+    },
+    {
+      "sample": {
+        "id": "cg-03",
+        "category": "code_generation",
+        "query": "Write a Python function to extract and validate citations from LLM output in the format [arxiv:ID] or [source:N].",
+        "goldStandard": {
+          "answer": "```python\nimport re\nfrom dataclasses import dataclass\nfrom typing import List\n\n@dataclass\nclass Citation:\n    type: str\n    id: str\n    valid: bool = True\n\ndef extract_citations(text: str, known_sources: List[str] = None) -> List[Citation]:\n    pattern = r'\\[(arxiv|perplexity|source):(\\w+)\\]'\n    citations = []\n    for match in re.finditer(pattern, text, re.IGNORECASE):\n        ctype, cid = match.groups()\n        valid = True\n        if known_sources and ctype.lower() == 'arxiv':\n            valid = cid in known_sources\n        citations.append(Citation(type=ctype.lower(), id=cid, valid=valid))\n    return citations\n```",
+          "atomicFacts": [
+            "Uses regex for extraction",
+            "Supports multiple citation types",
+            "Validates against known sources",
+            "Returns structured Citation objects",
+            "Case-insensitive matching"
+          ],
+          "sources": [
+            "Citation parsing patterns"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Domain-specific code requires research context"
+      },
+      "winner": "baseline",
+      "systemScore": 1.5,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "cg-04",
+        "category": "code_generation",
+        "query": "Write a TypeScript function to calculate Step-level F1 score for atomic proposition evaluation.",
+        "goldStandard": {
+          "answer": "```typescript\ninterface AtomicEvaluation {\n  precision: number;  // supported claims / total claims\n  recall: number;     // captured gold facts / total gold facts\n  f1: number;\n}\n\nfunction calculateStepF1(\n  systemClaims: string[],\n  supportedClaims: string[],\n  goldFacts: string[],\n  capturedFacts: string[]\n): AtomicEvaluation {\n  const precision = systemClaims.length > 0 \n    ? supportedClaims.length / systemClaims.length \n    : 0;\n  const recall = goldFacts.length > 0 \n    ? capturedFacts.length / goldFacts.length \n    : 0;\n  const f1 = (precision + recall) > 0 \n    ? 2 * (precision * recall) / (precision + recall) \n    : 0;\n  return { precision, recall, f1 };\n}\n```",
+          "atomicFacts": [
+            "Calculates precision from supported claims",
+            "Calculates recall from captured facts",
+            "Uses harmonic mean for F1",
+            "Handles zero division",
+            "Returns structured result"
+          ],
+          "sources": [
+            "arxiv:1809.09600",
+            "F1 calculation"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Research-specific metric implementation"
+      },
+      "winner": "baseline",
+      "systemScore": 3,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "cg-05",
+        "category": "code_generation",
+        "query": "Write a Python async function to batch embed documents while respecting rate limits.",
+        "goldStandard": {
+          "answer": "```python\nimport asyncio\nfrom typing import List\nimport openai\n\nasync def batch_embed(\n    texts: List[str],\n    model: str = 'text-embedding-3-small',\n    batch_size: int = 100,\n    rpm_limit: int = 3000,\n    tpm_limit: int = 1000000\n) -> List[List[float]]:\n    embeddings = []\n    rpm_delay = 60 / rpm_limit\n    \n    for i in range(0, len(texts), batch_size):\n        batch = texts[i:i + batch_size]\n        token_estimate = sum(len(t.split()) * 1.3 for t in batch)\n        \n        if token_estimate > tpm_limit / 60:\n            await asyncio.sleep(60)\n        \n        response = await openai.embeddings.create(input=batch, model=model)\n        embeddings.extend([e.embedding for e in response.data])\n        await asyncio.sleep(rpm_delay)\n    \n    return embeddings\n```",
+          "atomicFacts": [
+            "Async implementation",
+            "Respects batch_size",
+            "Calculates RPM delay",
+            "Estimates token usage",
+            "Handles TPM limit"
+          ],
+          "sources": [
+            "OpenAI API docs",
+            "Rate limiting"
+          ]
+        },
+        "expectedWinner": "tie",
+        "rationale": "API integration code"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 3.5
+    },
+    {
+      "sample": {
+        "id": "cg-07",
+        "category": "code_generation",
+        "query": "Write Python code to implement paired bootstrap resampling for A/B test significance.",
+        "goldStandard": {
+          "answer": "```python\nimport numpy as np\nfrom dataclasses import dataclass\n\n@dataclass\nclass BootstrapResult:\n    mean_delta: float\n    ci_lower: float\n    ci_upper: float\n    p_superiority: float\n    is_significant: bool\n\ndef paired_bootstrap(\n    scores_a: list[float],\n    scores_b: list[float],\n    n_iterations: int = 10000,\n    alpha: float = 0.05\n) -> BootstrapResult:\n    deltas = np.array(scores_b) - np.array(scores_a)\n    n = len(deltas)\n    \n    boot_means = []\n    b_wins = 0\n    for _ in range(n_iterations):\n        sample = np.random.choice(deltas, size=n, replace=True)\n        boot_means.append(np.mean(sample))\n        if np.sum(sample > 0) > n / 2:\n            b_wins += 1\n    \n    ci_lower = np.percentile(boot_means, alpha/2 * 100)\n    ci_upper = np.percentile(boot_means, (1-alpha/2) * 100)\n    \n    return BootstrapResult(\n        mean_delta=np.mean(boot_means),\n        ci_lower=ci_lower,\n        ci_upper=ci_upper,\n        p_superiority=b_wins / n_iterations,\n        is_significant=ci_lower > 0 or ci_upper < 0\n    )\n```",
+          "atomicFacts": [
+            "Calculates paired deltas",
+            "Resamples with replacement",
+            "Computes confidence interval",
+            "Calculates P(superiority)",
+            "Returns structured result"
+          ],
+          "sources": [
+            "arxiv:2303.15638",
+            "Bootstrap methods"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Statistical method for LLM evaluation"
+      },
+      "winner": "tie",
+      "systemScore": 0,
+      "baselineScore": 0
+    },
+    {
+      "sample": {
+        "id": "cg-08",
+        "category": "code_generation",
+        "query": "Write a TypeScript streaming handler for OpenAI chat completions with token counting.",
+        "goldStandard": {
+          "answer": "```typescript\nimport OpenAI from 'openai';\n\ninterface StreamResult {\n  content: string;\n  inputTokens: number;\n  outputTokens: number;\n}\n\nasync function streamWithTokens(\n  client: OpenAI,\n  messages: OpenAI.Chat.ChatCompletionMessageParam[],\n  model: string = 'gpt-4o'\n): Promise<StreamResult> {\n  let content = '';\n  let inputTokens = 0;\n  let outputTokens = 0;\n  \n  const stream = await client.chat.completions.create({\n    model,\n    messages,\n    stream: true,\n    stream_options: { include_usage: true }\n  });\n  \n  for await (const chunk of stream) {\n    const delta = chunk.choices[0]?.delta?.content || '';\n    content += delta;\n    process.stdout.write(delta);\n    \n    if (chunk.usage) {\n      inputTokens = chunk.usage.prompt_tokens;\n      outputTokens = chunk.usage.completion_tokens;\n    }\n  }\n  \n  return { content, inputTokens, outputTokens };\n}\n```",
+          "atomicFacts": [
+            "Uses async iterator for streaming",
+            "Includes stream_options for usage",
+            "Accumulates content from deltas",
+            "Returns token counts",
+            "Outputs to stdout"
+          ],
+          "sources": [
+            "OpenAI streaming docs"
+          ]
+        },
+        "expectedWinner": "tie",
+        "rationale": "Standard API streaming pattern"
+      },
+      "winner": "system",
+      "systemScore": 4.5,
+      "baselineScore": 2.5
+    },
+    {
+      "sample": {
+        "id": "cg-09",
+        "category": "code_generation",
+        "query": "Write Python code to implement semantic chunking that preserves code blocks.",
+        "goldStandard": {
+          "answer": "```python\nimport re\nfrom dataclasses import dataclass\nfrom typing import List\n\n@dataclass\nclass Chunk:\n    content: str\n    is_code: bool\n    start_idx: int\n\ndef semantic_chunk(text: str, max_size: int = 1000, overlap: int = 100) -> List[Chunk]:\n    chunks = []\n    code_pattern = r'```[\\s\\S]*?```'\n    \n    # Extract code blocks as atomic units\n    code_blocks = [(m.start(), m.end(), m.group()) for m in re.finditer(code_pattern, text)]\n    \n    pos = 0\n    for start, end, code in code_blocks:\n        # Chunk text before code block\n        if pos < start:\n            text_chunk = text[pos:start]\n            for sub in _split_text(text_chunk, max_size, overlap):\n                chunks.append(Chunk(sub, False, pos))\n        # Add code block as atomic chunk\n        chunks.append(Chunk(code, True, start))\n        pos = end\n    \n    # Handle remaining text\n    if pos < len(text):\n        for sub in _split_text(text[pos:], max_size, overlap):\n            chunks.append(Chunk(sub, False, pos))\n    \n    return chunks\n\ndef _split_text(text: str, max_size: int, overlap: int) -> List[str]:\n    if len(text) <= max_size:\n        return [text]\n    chunks = []\n    start = 0\n    while start < len(text):\n        end = min(start + max_size, len(text))\n        chunks.append(text[start:end])\n        start = end - overlap\n    return chunks\n```",
+          "atomicFacts": [
+            "Detects code blocks with regex",
+            "Treats code blocks as atomic",
+            "Splits non-code with overlap",
+            "Tracks chunk positions",
+            "Returns structured chunks"
+          ],
+          "sources": [
+            "RAG chunking strategies"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Domain-specific RAG implementation"
+      },
+      "winner": "tie",
+      "systemScore": 0,
+      "baselineScore": 0
+    },
+    {
+      "sample": {
+        "id": "cg-10",
+        "category": "code_generation",
+        "query": "Write a simple Python hello world function.",
+        "goldStandard": {
+          "answer": "```python\ndef hello():\n    print('Hello, World!')\n```",
+          "atomicFacts": [
+            "Defines function",
+            "Prints hello world"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Trivial task, faster system preferred"
+      },
+      "winner": "tie",
+      "systemScore": 4,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "if-01",
+        "category": "instruction_following",
+        "query": "Write exactly 3 bullet points about LLM evaluation, each starting with a different letter from A, B, C.",
+        "goldStandard": {
+          "answer": "- Accuracy metrics like F1 and exact match measure factual correctness\n- Benchmark diversity ensures models aren't overfitting to specific tasks\n- Calibration testing verifies model confidence aligns with actual correctness",
+          "atomicFacts": [
+            "Exactly 3 bullet points",
+            "Starts with A",
+            "Starts with B",
+            "Starts with C"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Format constraint following"
+      },
+      "winner": "baseline",
+      "systemScore": 2,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "if-02",
+        "category": "instruction_following",
+        "query": "Explain RAG in exactly 50 words, no more, no less.",
+        "goldStandard": {
+          "answer": "Retrieval-Augmented Generation combines document retrieval with language model generation. The system first searches a knowledge base for relevant documents using embeddings or keyword matching. These retrieved passages are then provided as context to the language model, which generates responses grounded in the retrieved information, reducing hallucinations significantly.",
+          "atomicFacts": [
+            "Exactly 50 words",
+            "Explains retrieval step",
+            "Explains generation step",
+            "Mentions grounding benefit"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Exact word count constraint"
+      },
+      "winner": "baseline",
+      "systemScore": 1,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "if-03",
+        "category": "instruction_following",
+        "query": "List 5 LLM providers in alphabetical order, formatted as a numbered list.",
+        "goldStandard": {
+          "answer": "1. Anthropic\n2. Cohere\n3. Google\n4. Meta\n5. OpenAI",
+          "atomicFacts": [
+            "Exactly 5 items",
+            "Alphabetical order",
+            "Numbered list format"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Simple constraint following"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "if-04",
+        "category": "instruction_following",
+        "query": "Provide a JSON object with exactly 3 keys: 'model', 'task', 'score' where score is between 0.8 and 0.95.",
+        "goldStandard": {
+          "answer": "{\"model\": \"gpt-4o\", \"task\": \"summarization\", \"score\": 0.87}",
+          "atomicFacts": [
+            "Valid JSON",
+            "Exactly 3 keys",
+            "Has model key",
+            "Has task key",
+            "Has score key",
+            "Score between 0.8 and 0.95"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Structured output constraint"
+      },
+      "winner": "baseline",
+      "systemScore": 3.5,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "if-05",
+        "category": "instruction_following",
+        "query": "Write a haiku (5-7-5 syllables) about machine learning.",
+        "goldStandard": {
+          "answer": "Data flows like streams\nNeural pathways learn and grow\nPatterns emerge clear",
+          "atomicFacts": [
+            "5 syllables line 1",
+            "7 syllables line 2",
+            "5 syllables line 3",
+            "About machine learning"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Creative format constraint"
+      },
+      "winner": "baseline",
+      "systemScore": 0,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "if-06",
+        "category": "instruction_following",
+        "query": "Explain transformers without using the words 'attention', 'query', 'key', or 'value'.",
+        "goldStandard": {
+          "answer": "Transformers process sequences by allowing each position to gather relevant information from all other positions in parallel. They use learned weighting mechanisms that compute compatibility scores between elements. This enables capturing long-range dependencies efficiently, making them superior to recurrent approaches for many NLP tasks.",
+          "atomicFacts": [
+            "No 'attention' word",
+            "No 'query' word",
+            "No 'key' word",
+            "No 'value' word",
+            "Still explains mechanism"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Negative constraint following"
+      },
+      "winner": "baseline",
+      "systemScore": 3,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "if-07",
+        "category": "instruction_following",
+        "query": "Provide exactly 2 code examples: one in Python, one in JavaScript, each under 3 lines.",
+        "goldStandard": {
+          "answer": "Python:\n```python\nresult = [x**2 for x in range(10)]\n```\n\nJavaScript:\n```javascript\nconst result = [...Array(10)].map((_, i) => i ** 2);\n```",
+          "atomicFacts": [
+            "Exactly 2 examples",
+            "One Python",
+            "One JavaScript",
+            "Python under 3 lines",
+            "JavaScript under 3 lines"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Multi-constraint instruction"
+      },
+      "winner": "baseline",
+      "systemScore": 2.5,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "if-08",
+        "category": "instruction_following",
+        "query": "Create a markdown table with 3 columns (Model, Context, Cost) and exactly 4 rows of data.",
+        "goldStandard": {
+          "answer": "| Model | Context | Cost |\n|-------|---------|------|\n| GPT-4 | 128K | $30/1M |\n| Claude 3 | 200K | $15/1M |\n| Gemini Pro | 1M | $7/1M |\n| Llama 3 | 8K | Free |",
+          "atomicFacts": [
+            "Valid markdown table",
+            "3 columns",
+            "4 data rows",
+            "Has Model column",
+            "Has Context column",
+            "Has Cost column"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Structured format constraint"
+      },
+      "winner": "tie",
+      "systemScore": 4,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "if-09",
+        "category": "instruction_following",
+        "query": "Write a response where every sentence ends with a question mark, explaining embeddings.",
+        "goldStandard": {
+          "answer": "Have you wondered how text becomes numbers? Embeddings convert words into dense vectors in a high-dimensional space? Similar meanings cluster together, making semantic search possible? The model learns these representations during training on large text corpora?",
+          "atomicFacts": [
+            "All sentences end with ?",
+            "Explains embeddings",
+            "Multiple sentences"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Unusual format constraint"
+      },
+      "winner": "baseline",
+      "systemScore": 3.5,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "if-10",
+        "category": "instruction_following",
+        "query": "List pros and cons of fine-tuning, with exactly 3 pros and 3 cons, each one word only.",
+        "goldStandard": {
+          "answer": "Pros:\n1. Specialized\n2. Efficient\n3. Customized\n\nCons:\n1. Expensive\n2. Overfitting\n3. Maintenance",
+          "atomicFacts": [
+            "Exactly 3 pros",
+            "Exactly 3 cons",
+            "Each one word",
+            "About fine-tuning"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "tie",
+        "rationale": "Multiple constraints"
+      },
+      "winner": "tie",
+      "systemScore": 4,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "rq-01",
+        "category": "rag_quality",
+        "query": "Based on the provided context about BERT, what is its hidden size?",
+        "goldStandard": {
+          "answer": "BERT-base has a hidden size of 768, while BERT-large has a hidden size of 1024.",
+          "atomicFacts": [
+            "BERT-base hidden size is 768",
+            "BERT-large hidden size is 1024",
+            "Information from context"
+          ],
+          "sources": [
+            "Provided context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Grounding to specific context"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "rq-02",
+        "category": "rag_quality",
+        "query": "According to the research paper provided, what threshold is recommended for entailment?",
+        "goldStandard": {
+          "answer": "According to the research paper, the recommended entailment threshold is 0.85 [context].",
+          "atomicFacts": [
+            "Threshold is 0.85",
+            "Cites context",
+            "For production systems"
+          ],
+          "sources": [
+            "Provided context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Citation grounding quality"
+      },
+      "winner": "baseline",
+      "systemScore": 2,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "rq-03",
+        "category": "rag_quality",
+        "query": "What does the context say about handling conflicting information?",
+        "goldStandard": {
+          "answer": "The context specifies three steps for handling conflicts: flag contradictions, present both viewpoints with citations, and indicate confidence levels.",
+          "atomicFacts": [
+            "Flag contradiction",
+            "Present both viewpoints",
+            "Include citations",
+            "Indicate confidence levels"
+          ],
+          "sources": [
+            "Provided context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Multi-step extraction from context"
+      },
+      "winner": "baseline",
+      "systemScore": 2,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "rq-04",
+        "category": "rag_quality",
+        "query": "Based on the benchmark results provided, which model performs best on multi-hop reasoning?",
+        "goldStandard": {
+          "answer": "According to the benchmark results, Claude 3 Opus performs best on multi-hop reasoning with 82%.",
+          "atomicFacts": [
+            "Claude 3 Opus is best",
+            "Score is 82%",
+            "On multi-hop reasoning",
+            "Cites context"
+          ],
+          "sources": [
+            "Provided context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Extracting maximum from data"
+      },
+      "winner": "tie",
+      "systemScore": 1.5,
+      "baselineScore": 2
+    },
+    {
+      "sample": {
+        "id": "rq-05",
+        "category": "rag_quality",
+        "query": "What is NOT mentioned in the context about vector databases?",
+        "goldStandard": {
+          "answer": "The context does not mention: pricing for Qdrant or Weaviate, specific performance benchmarks, integration complexity, or open-source licensing details.",
+          "atomicFacts": [
+            "No Qdrant pricing",
+            "No Weaviate pricing",
+            "No benchmarks",
+            "No licensing info"
+          ],
+          "sources": [
+            "Inference from context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Negative retrieval task"
+      },
+      "winner": "baseline",
+      "systemScore": 3,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "rq-06",
+        "category": "rag_quality",
+        "query": "Synthesize the key recommendations from the provided guidelines.",
+        "goldStandard": {
+          "answer": "The guidelines recommend: using structured outputs, implementing exponential backoff retries, logging all responses, and setting 30s default timeouts.",
+          "atomicFacts": [
+            "Use structured outputs",
+            "Implement exponential backoff",
+            "Log all responses",
+            "30s default timeout"
+          ],
+          "sources": [
+            "Provided context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Multi-point synthesis from context"
+      },
+      "winner": "tie",
+      "systemScore": 1,
+      "baselineScore": 2.5
+    },
+    {
+      "sample": {
+        "id": "rq-07",
+        "category": "rag_quality",
+        "query": "Does the context support the claim that temperature=0 guarantees deterministic output?",
+        "goldStandard": {
+          "answer": "No, the context explicitly states that temperature=0 does not guarantee determinism. It reduces variation but floating-point arithmetic and model updates can still cause differences. A fixed seed is also recommended.",
+          "atomicFacts": [
+            "temperature=0 does not guarantee determinism",
+            "Reduces variation",
+            "Floating-point causes issues",
+            "Use fixed seed"
+          ],
+          "sources": [
+            "Provided context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Claim verification against context"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "rq-08",
+        "category": "rag_quality",
+        "query": "What specific numbers are mentioned in the performance report?",
+        "goldStandard": {
+          "answer": "Numbers in the report: 94.2% factual accuracy, 87.5% reasoning accuracy, 245ms average latency, 512ms p95 latency, $0.023 per query cost.",
+          "atomicFacts": [
+            "94.2% factual accuracy",
+            "87.5% reasoning accuracy",
+            "245ms average latency",
+            "512ms p95 latency",
+            "$0.023 per query"
+          ],
+          "sources": [
+            "Provided context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Numeric extraction completeness"
+      },
+      "winner": "baseline",
+      "systemScore": 2,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "rq-09",
+        "category": "rag_quality",
+        "query": "Compare the two approaches mentioned in the context.",
+        "goldStandard": {
+          "answer": "Approach A is faster (10ms vs 150ms) and needs no training, but has lower accuracy (75% vs 95%). Approach B offers higher accuracy at the cost of latency and training requirements.",
+          "atomicFacts": [
+            "A is 10ms, B is 150ms",
+            "A is 75%, B is 95%",
+            "A needs no training",
+            "B requires training"
+          ],
+          "sources": [
+            "Provided context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Comparative analysis from context"
+      },
+      "winner": "tie",
+      "systemScore": 3,
+      "baselineScore": 3.5
+    },
+    {
+      "sample": {
+        "id": "rq-10",
+        "category": "rag_quality",
+        "query": "What prerequisites are listed in the setup guide?",
+        "goldStandard": {
+          "answer": "Prerequisites: Python 3.10+, Node.js 18+, 16GB RAM minimum, and optionally an NVIDIA GPU with 8GB VRAM for inference acceleration.",
+          "atomicFacts": [
+            "Python 3.10+",
+            "Node.js 18+",
+            "16GB RAM minimum",
+            "NVIDIA GPU optional",
+            "8GB VRAM"
+          ],
+          "sources": [
+            "Provided context"
+          ]
+        },
+        "expectedWinner": "mcp",
+        "rationale": "Complete extraction from structured context"
+      },
+      "winner": "tie",
+      "systemScore": 2,
+      "baselineScore": 2.5
+    },
+    {
+      "sample": {
+        "id": "lat-01",
+        "category": "latency",
+        "query": "What is 2+2?",
+        "goldStandard": {
+          "answer": "4",
+          "atomicFacts": [
+            "Answer is 4"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Trivial query, fastest response wins"
+      },
+      "winner": "baseline",
+      "systemScore": 3,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "lat-02",
+        "category": "latency",
+        "query": "What color is the sky?",
+        "goldStandard": {
+          "answer": "Blue",
+          "atomicFacts": [
+            "Sky is blue"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Simple question, latency matters"
+      },
+      "winner": "baseline",
+      "systemScore": 4,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "lat-03",
+        "category": "latency",
+        "query": "Define API.",
+        "goldStandard": {
+          "answer": "Application Programming Interface - a set of protocols for building software applications.",
+          "atomicFacts": [
+            "API definition"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Quick definition lookup"
+      },
+      "winner": "baseline",
+      "systemScore": 3.5,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "lat-04",
+        "category": "latency",
+        "query": "What year is it?",
+        "goldStandard": {
+          "answer": "2024",
+          "atomicFacts": [
+            "Current year"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Simple factual, speed preferred"
+      },
+      "winner": "tie",
+      "systemScore": 3,
+      "baselineScore": 2.5
+    },
+    {
+      "sample": {
+        "id": "lat-05",
+        "category": "latency",
+        "query": "Is Python a programming language?",
+        "goldStandard": {
+          "answer": "Yes",
+          "atomicFacts": [
+            "Python is a programming language"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Boolean answer, fastest wins"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "lat-06",
+        "category": "latency",
+        "query": "What does LLM stand for?",
+        "goldStandard": {
+          "answer": "Large Language Model",
+          "atomicFacts": [
+            "LLM = Large Language Model"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Acronym expansion"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 4
+    },
+    {
+      "sample": {
+        "id": "lat-07",
+        "category": "latency",
+        "query": "Name one cloud provider.",
+        "goldStandard": {
+          "answer": "AWS",
+          "atomicFacts": [
+            "AWS is a cloud provider"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Single item request"
+      },
+      "winner": "tie",
+      "systemScore": 4.5,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "lat-08",
+        "category": "latency",
+        "query": "What is JSON?",
+        "goldStandard": {
+          "answer": "JavaScript Object Notation, a data interchange format.",
+          "atomicFacts": [
+            "JSON definition"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Quick definition"
+      },
+      "winner": "baseline",
+      "systemScore": 3.5,
+      "baselineScore": 5
+    },
+    {
+      "sample": {
+        "id": "lat-09",
+        "category": "latency",
+        "query": "Is 10 greater than 5?",
+        "goldStandard": {
+          "answer": "Yes",
+          "atomicFacts": [
+            "10 > 5"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Simple comparison"
+      },
+      "winner": "tie",
+      "systemScore": 4.5,
+      "baselineScore": 4.5
+    },
+    {
+      "sample": {
+        "id": "lat-10",
+        "category": "latency",
+        "query": "What is the capital of France?",
+        "goldStandard": {
+          "answer": "Paris",
+          "atomicFacts": [
+            "Paris is capital of France"
+          ],
+          "sources": []
+        },
+        "expectedWinner": "perplexity",
+        "rationale": "Basic factual lookup"
+      },
+      "winner": "system",
+      "systemScore": 5,
+      "baselineScore": 4
+    }
+  ]
+}

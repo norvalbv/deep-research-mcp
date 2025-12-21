@@ -27,7 +27,7 @@
     "benchmark:view": "tsx benchmarks/view-results.ts",
     "benchmark:compare-results": "tsx benchmarks/compare-results.ts",
     "benchmark:generate": "tsx benchmarks/generate-responses.ts",
-    "benchmark:generate:sample": "SAMPLE_LIMIT=5 tsx benchmarks/generate-responses.ts",
+    "benchmark:generate:new-set": "tsx benchmarks/generate-responses.ts --new-set",
     "calibrate": "tsx benchmarks/calibration.ts",
     "prepare": "husky"
   },

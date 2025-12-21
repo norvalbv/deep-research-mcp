@@ -345,6 +345,14 @@ graph TD
     S --> I
 ```
 
+
+| Depth | Perplexity | Deep | Context7 | arXiv | Consensus | Challenge | Voting | Code |
+|-------|------------|------|----------|-------|-----------|-----------|--------|------|
+| 1     | Yes        | No   | No       | No    | No        | No        | No     | No   |
+| 2     | Yes        | Yes  | No       | No    | No        | Yes       | No     | No   |
+| 3     | Yes        | Yes  | Yes      | No    | No        | Yes       | Yes    | Yes  |
+| 4     | Yes        | Yes  | Yes      | Yes   | Yes       | Yes       | Yes    | Yes  |
+
 ### Inline Citations
 
 Reports now include **inline source citations** for traceability:
@@ -467,12 +475,12 @@ LangSmith provides comprehensive dataset management [context7:langsmith] which e
 evaluation workflow automation [perplexity:langsmith-docs]. Recent research shows that
 synthetic data generation requires careful attention to distribution matching [arxiv:2024.12345].
 
-```typescript
+\`\`\`typescript
 // Code validated against Context7
 import { Dataset } from "langsmith";
 
 const dataset = new Dataset("my-eval-set");
-```
+\`\`\`
 
 ### Sub-Question 1: What makes evaluation data representative?
 
@@ -506,12 +514,12 @@ provide sufficient statistical power for small effect detection [arxiv:2024.6789
 **Report ID**: R-182602
 
 **Usage Examples**:
-```
+\`\`\`
 read_report(citation="R-182602:overview")      # Read overview section
 read_report(citation="R-182602:q1")            # Read sub-question 1
 read_report(citation="R-182602:q1:20-50")      # Lines 20-50 of sub-Q 1
 read_report(citation="R-182602", full=true)    # Full report (last resort)
-```
+\`\`\`
 ```
 
 ## This MCP is built on top of other MCP servers and tools
@@ -528,6 +536,10 @@ This project includes comprehensive benchmarking tools to compare MCP research q
 ### Running Benchmarks
 
 ```bash
+# Generate responses for benchmark dataset
+npm run benchmark:generate              # Generate only missing responses
+npm run benchmark:generate:new-set      # Clear all responses and start fresh
+
 # Run full benchmark comparison (generates new results)
 npm run benchmark:compare
 
@@ -537,6 +549,15 @@ npm run benchmark:view
 # Compare multiple benchmark runs over time
 npm run benchmark:compare-results
 ```
+
+**Response Generation Options:**
+- `benchmark:generate` - Only generates responses for samples that don't have them yet (incremental)
+- `benchmark:generate:new-set` - Clears ALL existing responses and regenerates from scratch (use after codebase changes)
+
+This allows you to:
+1. Make changes to your research codebase
+2. Run `npm run benchmark:generate:new-set` to regenerate all responses with the new code
+3. Compare results with previous benchmarks using `benchmark:compare-results`
 
 ### Viewing Results
 
