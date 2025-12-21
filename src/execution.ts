@@ -62,10 +62,19 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
   }
 
   // Determine which tools to run based on plan and depth level
+  // Depth gating (consistent with planning.ts):
+  // - Perplexity: depth >= 1 (always)
+  // - Deep analysis: depth >= 2
+  // - Context7/library docs: depth >= 3
+  // - arXiv: depth >= 4
+  // - Consensus: depth >= 4 (handled in controller.ts)
+  const depth = ctx.depth;
   const shouldRunPerplexity = actionPlan.steps.some(s => s.includes('perplexity') || s.includes('web'));
-  const shouldRunDeepThinking = actionPlan.steps.some(s => s.includes('deep') || s.includes('thinking'));
-  const shouldRunArxiv = (ctx.depth >= 3 || actionPlan.steps.some(s => s.includes('arxiv') || s.includes('papers'))) && !actionPlan.toolsToSkip?.includes('arxiv_search');
-  const shouldRunContext7Main = actionPlan.steps.some(s => s.includes('context7') || s.includes('library') || s.includes('docs'));
+  const shouldRunDeepThinking = depth >= 2 && actionPlan.steps.some(s => s.includes('deep') || s.includes('thinking'));
+  const shouldRunArxiv = depth >= 4 && actionPlan.steps.some(s => s.includes('arxiv') || s.includes('papers')) && !actionPlan.toolsToSkip?.includes('arxiv_search');
+  const shouldRunContext7Main = depth >= 3 && actionPlan.steps.some(s => s.includes('context7') || s.includes('library') || s.includes('docs'));
+  
+  console.error(`[Exec] Depth ${depth}: perplexity=${shouldRunPerplexity}, deep=${shouldRunDeepThinking}, context7=${shouldRunContext7Main}, arxiv=${shouldRunArxiv}`);
 
   // PHASE 1: Run all data gathering in parallel
   console.error('[Exec] Phase 1: Gathering data in parallel...');

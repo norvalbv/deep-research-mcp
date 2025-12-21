@@ -65,7 +65,9 @@ async function callGemini(
     }
 
     const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    
+    return content;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -225,23 +227,57 @@ export function getVotingConfigs(geminiKey?: string): LLMConfig[] {
 }
 
 export const compressText = async (text: string, maxWords: number, geminiKey?: string): Promise<string> => {
-  // Quick check: if text is already short enough, return as-is
-  const wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
+  // Count words excluding markdown link URLs (which inflate word count)
+  // [[domain.com]](https://...) should count as ~2 words, not 5+
+  const textWithoutUrls = text.replace(/\]\]\([^)]+\)/g, ']]'); // Remove URL parts of links
+  const wordCount = textWithoutUrls.split(/\s+/).filter(w => w.length > 0).length;
+  
+  const endsComplete = /[.!?]\s*$/.test(text.trim());
+  
+  // Short content handling (no LLM needed)
   if (wordCount <= maxWords) {
-    return text;
+    if (endsComplete) {
+      return text; // Already short and complete
+    }
+    // Short but incomplete: extract complete sentences (no LLM call)
+    const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+    const extracted = sentences.join('').trim();
+    return extracted || text; // Fallback to original if no sentences found
   }
 
   const key = geminiKey || '';
   if (!key) {
     console.error('[Compress Text] ERROR: GEMINI_API_KEY not provided');
-    // Fallback: extract first N words
-    return text.split(/\s+/).slice(0, maxWords).join(' ') + '...';
+    // Fallback: extract complete sentences up to N words
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    let result = '';
+    let count = 0;
+    for (const sentence of sentences) {
+      const sentenceWords = sentence.split(/\s+/).length;
+      if (count + sentenceWords > maxWords && count > 0) break;
+      result += (result ? ' ' : '') + sentence;
+      count += sentenceWords;
+    }
+    return result || text.split(/\s+/).slice(0, maxWords).join(' ') + '...';
   }
 
-  // Summarize text to be approximately maxWords words
+  // Use character limit (more concrete than word count for LLMs)
+  // ~100 words ≈ 500 characters
+  const maxChars = maxWords * 5;
+
+  // Summarize - complete sentences only, no length constraint in prompt
   const summary = await callLLM(
-    `Summarize the following text to be approximately ${maxWords} words. Focus on the most important information and insights. Be concise but preserve key details.\n\nText to summarize:\n${text}`, 
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key }
+    `${maxChars? `Write a ${maxChars} character summary of this text.`: 'Write a short summary of this text, ideally keeping it around 3-4 sentences or less.'} Each sentence must be grammatically complete.
+
+Text:
+${text}`, 
+    { 
+      provider: 'gemini', 
+      model: 'gemini-3-flash-preview', 
+      apiKey: key, 
+      maxOutputTokens: 8000,  // Higher to account for internal reasoning tokens
+      timeout: 60000  // 60s timeout for compression (thinking tokens can take time)
+    }
   );
   
   return summary.content;

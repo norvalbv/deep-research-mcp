@@ -48,14 +48,14 @@ export function formatMarkdown(result: ResearchResult): string {
 
   // Render structured synthesis as markdown
   sections.push(`## Overview\n`);
-  sections.push(result.synthesis.overview);
+  sections.push(resolveCitations(result.synthesis.overview, result.execution));
   sections.push('');
 
   // Render sub-questions as dedicated sections
   if (result.synthesis.subQuestions) {
     for (const [key, value] of Object.entries(result.synthesis.subQuestions)) {
       sections.push(`## ${value.question}\n`);
-      sections.push(value.answer);
+      sections.push(resolveCitations(value.answer, result.execution));
       sections.push('');
     }
   }
@@ -63,7 +63,7 @@ export function formatMarkdown(result: ResearchResult): string {
   // Additional insights
   if (result.synthesis.additionalInsights && result.synthesis.additionalInsights.trim()) {
     sections.push(`## Additional Insights\n`);
-    sections.push(result.synthesis.additionalInsights);
+    sections.push(resolveCitations(result.synthesis.additionalInsights, result.execution));
     sections.push('');
   }
 
@@ -139,6 +139,34 @@ export function formatMarkdown(result: ResearchResult): string {
   }
 
   return sections.join('\n');
+}
+
+/**
+ * Resolve citation indices to actual URLs
+ * Replaces [perplexity:N] with actual source URL or inline citation
+ */
+export function resolveCitations(text: string, execution: ExecutionResult): string {
+  const sources = execution.perplexityResult?.sources || [];
+  
+  // Replace [perplexity:N] with actual URLs, showing domain name
+  return text.replace(/\[perplexity:(\d+)\]/g, (match, numStr) => {
+    const num = parseInt(numStr, 10);
+    const sourceIndex = num - 1; // Citations are 1-indexed
+    
+    if (sourceIndex >= 0 && sourceIndex < sources.length) {
+      const url = sources[sourceIndex];
+      // Extract domain name for readable link text
+      let domain = 'source';
+      try {
+        const urlObj = new URL(url);
+        domain = urlObj.hostname.replace(/^www\./, '');
+      } catch { /* keep 'source' if URL parsing fails */ }
+      return `[[${domain}]](${url})`;
+    }
+    
+    // Keep original if source not found (shouldn't happen)
+    return match;
+  });
 }
 
 /**

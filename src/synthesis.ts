@@ -17,6 +17,7 @@ export interface SynthesisOptions {
   keyFindings?: string[];
   outputFormat?: 'summary' | 'detailed' | 'actionable_steps';
   includeCodeExamples?: boolean;
+  depth?: number;  // Complexity level 1-5, gates features like code examples
 }
 
 /**
@@ -47,7 +48,7 @@ export async function synthesizeFindings(
   options?: SynthesisOptions
 ): Promise<SynthesisOutput> {
   if (!geminiKey) {
-    return buildFallbackSynthesis(execution);
+    throw new Error('GEMINI_API_KEY is required for synthesis. Please set it in your environment.');
   }
 
   // Use phased synthesis if sub-questions exist (40% token savings)
@@ -62,21 +63,27 @@ export async function synthesizeFindings(
   console.error('[Synthesis] Single-phase synthesis...');
   const prompt = buildSynthesisPrompt(query, enrichedContext, execution, options, false);
 
-  try {
-    const response = await callLLM(prompt, {
-      provider: 'gemini',
-      model: 'gemini-3-flash-preview',
-      apiKey: geminiKey,
-      timeout: 120000,
-      maxOutputTokens: 32000,
-      temperature: 0.2  // Lower for deterministic, specific outputs
-    });
-    
-    return parseMarkdownSections(response.content, options?.subQuestions);
-  } catch (error) {
-    console.error('[Synthesis] Error:', error);
-    return buildFallbackSynthesis(execution);
+  // Depth-appropriate LLM settings:
+  // - Depth 1-2: Quick facts, smaller output, shorter timeout
+  // - Depth 3-4: Full analysis, larger output, longer timeout
+  const depth = options?.depth || 3;
+  const timeout = depth <= 2 ? 45000 : 120000;  // 45s for quick, 120s for deep
+
+  const response = await callLLM(prompt, {
+    provider: 'gemini',
+    model: 'gemini-3-flash-preview',
+    apiKey: geminiKey,
+    timeout,
+    maxOutputTokens: 32000,
+    temperature: 0.2  // Lower for deterministic, specific outputs
+  });
+  
+  // Fail fast if LLM returned empty content
+  if (!response.content || response.content.trim() === '') {
+    throw new Error('Synthesis LLM returned empty content. Please try again.');
   }
+  
+  return parseMarkdownSections(response.content, options?.subQuestions);
 }
 
 /**
@@ -129,7 +136,9 @@ ${enrichedContext}
 `);
   }
 
-  if (options?.includeCodeExamples) {
+  // Only include code examples at depth >= 3
+  const depth = options?.depth ?? 5;
+  if (options?.includeCodeExamples && depth >= 3) {
     sections.push(`**Code Examples Required (PRODUCTION-READY):**
 
 ### CRITICAL: DO NOT use TODO, FIXME, placeholders, or "# example" comments.
@@ -163,6 +172,9 @@ def process_data(data):
     pass
 \`\`\`
 `);
+  } else if (depth < 3) {
+    // At low depth, explicitly discourage code
+    sections.push(`**Note:** This is a quick lookup (depth ${depth}). Provide a direct, concise answer.`);
   }
 
   sections.push(`---
@@ -229,6 +241,7 @@ ${extractContent(execution.deepThinking).slice(0, 2000)}
 
   // Task instructions
   if (mainQueryOnly) {
+    const codeRequirement = depth >= 3 ? '3. Include working code examples with complete implementations\n' : '';
     sections.push(`---
 
 **YOUR TASK:**
@@ -238,8 +251,7 @@ Write a comprehensive answer to the main query. Be thorough and detailed.
 **Requirements:**
 1. Use exact numbers with units (">85% accuracy", "<200ms latency")
 2. Pick ONE clear recommendation when multiple options exist
-3. Include working code examples with complete implementations
-4. Use inline citations: [perplexity:N], [context7:library], [arxiv:id]
+${codeRequirement}4. Use inline citations: [perplexity:N], [context7:library], [arxiv:id]
 5. Be thorough - don't truncate or cut off mid-sentence
 `);
   } else {
@@ -270,8 +282,7 @@ ${subQuestionSections}
 1. Use EXACT section delimiters: <!-- SECTION:name -->
 2. Use exact numbers with units (">85% accuracy", "<200ms latency")
 3. Pick ONE clear recommendation when multiple options exist
-4. Include working code examples with complete implementations
-5. Inline citations: [perplexity:N], [context7:library], [arxiv:id]
+${depth >= 3 ? '4. Include working code examples with complete implementations\n' : ''}5. Inline citations: [perplexity:N], [context7:library], [arxiv:id]
 6. Keep logic consistent across sections (if overview uses "X OR Y", sub-questions must too)
 7. Be thorough - don't truncate mid-sentence
 `);
@@ -329,6 +340,11 @@ function parseMarkdownSections(markdown: string, subQuestions?: string[]): Synth
   // Fallback: if no delimiters found, treat entire response as overview
   if (!result.overview && delimiterMatches.length === 0) {
     result.overview = markdown;
+  }
+
+  // Final check: if overview is still empty after parsing, throw error
+  if (!result.overview || result.overview.trim() === '') {
+    throw new Error('Synthesis parsing produced empty overview. LLM response may have been malformed.');
   }
 
   return result;
@@ -521,30 +537,6 @@ Answer the sub-question thoroughly. Ensure your answer:
 }
 
 /**
- * Fallback synthesis when Gemini API key is unavailable
- */
-function buildFallbackSynthesis(execution: ExecutionResult): SynthesisOutput {
-  const parts: string[] = [];
-
-  if (execution.perplexityResult?.content) {
-    parts.push(`**Key Findings:**\n${execution.perplexityResult.content.slice(0, 1500)}`);
-  }
-
-  if (execution.arxivPapers?.papers?.length) {
-    parts.push(`**Relevant Papers:** ${execution.arxivPapers.papers.length} papers found`);
-  }
-
-  if (execution.libraryDocs) {
-    parts.push(`**Library Documentation:** Available`);
-  }
-
-  return {
-    overview: parts.join('\n\n') || 'No synthesis available - GEMINI_API_KEY not provided.',
-    additionalInsights: 'This is a fallback response due to missing API key.'
-  };
-}
-
-/**
  * Extract Global Constraint Manifest from sources BEFORE synthesis
  * This ensures all parallel synthesis calls share consistent facts
  * 
@@ -637,8 +629,6 @@ If no numeric values found, return empty object for numerics.`;
       provider: 'gemini',
       model: 'gemini-3-flash-preview',
       apiKey: geminiKey,
-      timeout: 15000,
-      maxOutputTokens: 2000,
     });
 
     // Parse JSON response

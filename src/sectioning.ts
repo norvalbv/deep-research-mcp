@@ -40,8 +40,11 @@ export async function generateSectionSummaries(
   // Generate summaries in parallel
   const summaryPromises = Object.entries(sections).map(async ([id, section]) => {
     try {
-      // Use compressText to generate a ~100 word summary
-      const summary = await compressText(section.content, 100, apiKey);
+      // Target: always ~100 words for summaries (not adjusted - let LLM handle citation preservation)
+      const targetWords = 100;
+      
+      // Use compressText to generate summary
+      const summary = await compressText(section.content, targetWords, apiKey);
       section.summary = summary;
     } catch (error) {
       console.error(`[Sectioning] Failed to generate summary for ${id}:`, error);
@@ -99,7 +102,7 @@ export function formatCondensedView(
   
   parts.push(`## Executive Summary\n`);
   parts.push(`**Query Answered:** ${executiveSummary.queryAnswered ? 'Yes' : 'No'} (${capitalizeFirst(executiveSummary.confidence)} Confidence)`);
-  parts.push(`**Key Recommendation:** ${executiveSummary.keyRecommendation}`);
+  parts.push(`**Key Summary:** ${executiveSummary.keyRecommendation}`);
   
   if (executiveSummary.budgetFeasibility) {
     parts.push(`**Budget Feasibility:** ${executiveSummary.budgetFeasibility}`);

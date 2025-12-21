@@ -29,6 +29,7 @@ export async function generateConsensusPlan(
     papersRead?: string[];
     techStack?: string[];
     subQuestions?: string[];
+    maxDepth?: number;  // User-requested maximum depth (1-5)
   },
   env?: Record<string, string>
 ): Promise<ResearchActionPlan> {
@@ -43,11 +44,12 @@ export async function generateConsensusPlan(
   // TRUE parallel LLM calls via direct API
   const responses = await callLLMsParallel(planningPrompt, configs);
 
-  // Parse responses into proposals
+  // Parse responses into proposals, respecting maxDepth cap
+  const maxDepth = options?.maxDepth;
   const validProposals: PlanningProposal[] = responses
     .filter((r): r is LLMResponse => !r.error && r.content.length > 0)
     .map((r) => {
-      const plan = parseActionPlan(r.content);
+      const plan = parseActionPlan(r.content, maxDepth);
       return { model: r.model, plan, confidence: calculateConfidence(plan) };
     });
 
@@ -68,15 +70,34 @@ export async function generateConsensusPlan(
   };
 }
 
-export function createFallbackPlan(options?: { techStack?: string[]; subQuestions?: string[] }): ResearchActionPlan {
-  const steps = ['perplexity_search', 'deep_analysis'];
-  if (options?.techStack?.length) steps.push('library_docs');
-  if (options?.subQuestions?.length) steps.push('sub_questions');
-  steps.push('challenge');
+export function createFallbackPlan(options?: { techStack?: string[]; subQuestions?: string[]; maxDepth?: number }): ResearchActionPlan {
+  const maxDepth = options?.maxDepth ?? 3;
+  const complexity = Math.min(3, maxDepth);
+  
+  const steps = ['perplexity_search'];
+  
+  // Only add deep_analysis at depth >= 2
+  if (complexity >= 2) {
+    steps.push('deep_analysis');
+  }
+  
+  // Only add library_docs at depth >= 3
+  if (complexity >= 3 && options?.techStack?.length) {
+    steps.push('library_docs');
+  }
+  
+  if (options?.subQuestions?.length) {
+    steps.push('sub_questions');
+  }
+  
+  // Only add challenge at depth >= 2
+  if (complexity >= 2) {
+    steps.push('challenge');
+  }
 
   return {
-    complexity: 3,
-    reasoning: 'Fallback plan (LLM planning failed)',
+    complexity,
+    reasoning: `Fallback plan (LLM planning failed)${options?.maxDepth ? ` - capped at depth ${options.maxDepth}` : ''}`,
     steps,
     modelVotes: [],
     toolsToUse: steps,
@@ -95,13 +116,18 @@ function buildPlanningPrompt(
     papersRead?: string[];
     techStack?: string[];
     subQuestions?: string[];
+    maxDepth?: number;
   }
 ): string {
+  const maxDepthInstruction = options?.maxDepth 
+    ? `\n**IMPORTANT: User requested max depth level: ${options.maxDepth}. Do NOT exceed this complexity level.**\n`
+    : '';
+    
   return `
 You are a research planning expert. Create a detailed action plan to answer this research query.
 
 Query: ${query}
-
+${maxDepthInstruction}
 ${enrichedContext ? `Context:\n${enrichedContext}\n` : ''}
 
 ${options?.constraints ? `Constraints:\n- ${options.constraints.join('\n- ')}\n` : ''}
@@ -163,10 +189,10 @@ Return a JSON action plan with this structure:
 }
 
 Rules:
-1. Complexity 1-2: Use perplexity only or + basic reasoning
-2. Complexity 3: Add context7 (if tech_stack)
-3. Complexity 4: add consensus validation
-4. Complexity 5: Add arxiv research papers
+1. Complexity 1: Use perplexity only
+2. Complexity 2: Add deep_analysis
+3. Complexity 3: Add context7 (if tech_stack provided)
+4. Complexity 4: Add arxiv papers and consensus validation
 5. Mark steps as parallel: true if they can run simultaneously
 6. Avoid tools for papers_read papers
 7. Keep total time under constraints if specified
@@ -175,9 +201,9 @@ Return ONLY the JSON, no explanation.
 `.trim();
 }
 
-function parseActionPlan(response: string): ResearchActionPlan {
+function parseActionPlan(response: string, maxDepth?: number): ResearchActionPlan {
   // DEBUG: Log first 300 chars of response
-  console.error(`[Planning] Raw response preview: ${response.slice(0, 300).replace(/\n/g, '\\n')}`);
+  console.error(`[Planning] Raw response preview: ${response.slice(0, 300).replace(/\n/g, '\\n')}${maxDepth ? ` (max depth: ${maxDepth})` : ''}`);
   
   // Step 1: Strip markdown code fences if present
   let jsonStr = response
@@ -248,16 +274,43 @@ function parseActionPlan(response: string): ResearchActionPlan {
     if (c >= 4) steps.push('arxiv_search');
   }
 
+  // Cap complexity at maxDepth if specified
+  let complexity = Math.min(4, Math.max(1, parsed.complexity || 3));
+  if (maxDepth !== undefined) {
+    complexity = Math.min(complexity, maxDepth);
+  }
+  
+  // Filter steps based on capped complexity (consistent with execution.ts)
+  // - deep_analysis: depth >= 2
+  // - context7/library: depth >= 3
+  // - arxiv: depth >= 4
+  // - consensus: depth >= 4
+  let filteredSteps = steps;
+  if (complexity < 2) {
+    // Remove deep_analysis at depth < 2
+    filteredSteps = filteredSteps.filter(s => !s.includes('deep') && !s.includes('thinking'));
+  }
+  if (complexity < 3) {
+    // Remove context7/library_docs at depth < 3
+    filteredSteps = filteredSteps.filter(s => !s.includes('library') && !s.includes('context'));
+  }
+  if (complexity < 4) {
+    // Remove consensus and arxiv at depth < 4
+    filteredSteps = filteredSteps.filter(s => !s.includes('consensus') && !s.includes('arxiv'));
+  }
+  
   const result = {
-    complexity: Math.min(5, Math.max(1, parsed.complexity || 3)),
-    reasoning: parsed.reasoning || 'No reasoning provided',
-    steps,
+    complexity,
+    reasoning: maxDepth !== undefined && parsed.complexity > maxDepth 
+      ? `${parsed.reasoning || 'No reasoning provided'} (capped from ${parsed.complexity} to ${maxDepth})`
+      : parsed.reasoning || 'No reasoning provided',
+    steps: filteredSteps,
     modelVotes: [],
-    toolsToUse: steps,
+    toolsToUse: filteredSteps,
     toolsToSkip: parsed.toolsToSkip || [],
   };
   
-  console.error(`[Planning] Parsed plan: complexity=${result.complexity}, steps=${result.steps.join(', ')}`);
+  console.error(`[Planning] Parsed plan: complexity=${result.complexity}, steps=${result.steps.join(', ')}${maxDepth ? ` (max: ${maxDepth})` : ''}`);
   return result;
 }
 

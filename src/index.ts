@@ -111,9 +111,9 @@ Returns validated markdown report with:
         .number()
         .int()
         .min(1)
-        .max(5)
+        .max(4)
         .optional()
-        .describe('Research depth: 1=quick facts, 2-3=analysis, 4-5=deep academic research. Auto-detected if not provided.'),
+        .describe('OPTIONAL: Set to skip auto-detection. 1=quick web search (~20s), 2=+analysis (~40s), 3=+library docs (~80s), 4=+papers+consensus (~180s). If omitted, depth is auto-detected via LLM consensus.'),
       
       papers_read: z
         .array(z.string())
@@ -847,9 +847,9 @@ server.registerTool(
         .number()
         .int()
         .min(1)
-        .max(5)
+        .max(4)
         .optional()
-        .describe('Research depth, range 1-5. 1 = web search, 2 = (1) + library docs, 3 = (1 + 2) + deep analysis, 4 = (1 + 2 + 3) + multi-model consensus, 5 = (1 + 2 + 3 + 4) + academic papers. Auto-detected if not provided.'),
+        .describe('OPTIONAL: Set to skip auto-detection. 1=quick web search (~20s), 2=+analysis (~40s), 3=+library docs (~80s), 4=+papers+consensus (~180s). If omitted, depth is auto-detected via LLM consensus.'),
       
       papers_read: z
         .array(z.string())
@@ -1034,6 +1034,16 @@ server.registerTool(
       }
     })();
 
+    // Calculate estimated wait time based on depth level
+    // Depth 1: 20s (quick lookup), 2: 40s, 3: 80s, 4: 180s (full research)
+    const estimatedSeconds = depth_level
+      ? [20, 40, 80, 180][Math.min(depth_level, 4) - 1]
+      : 120; // Default if depth not specified
+    
+    const depthMessage = depth_level 
+      ? ` (depth ${depth_level})`
+      : '';
+
     // Return immediately with job ID and EXPLICIT wait instruction
     return {
       content: [
@@ -1042,9 +1052,9 @@ server.registerTool(
           text: JSON.stringify({
             job_id: jobId,
             status: 'pending',
-            message: 'Research job started. IMPORTANT: Wait at LEAST 120 seconds before calling check_research_status. Research typically takes about 2-3 minutes to complete but can take longer if the research is complex.',
-            estimated_duration_seconds: 120,
-            next_action: 'Run sleep in the terminal for 120 seconds before calling check_research_status. Or alternatively, tell the user you must wait and exit.',
+            message: `Research job started${depthMessage}. IMPORTANT: Wait at LEAST ${estimatedSeconds} seconds before calling check_research_status. Research typically takes about ${Math.round(estimatedSeconds / 60)} minute(s) to complete but can take longer if the research is complex.`,
+            estimated_duration_seconds: estimatedSeconds,
+            next_action: `Run sleep in the terminal for ${estimatedSeconds} seconds before calling check_research_status. Or alternatively, tell the user you must wait and exit.`,
             query,
           }, null, 2),
         },
