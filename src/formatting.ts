@@ -100,30 +100,73 @@ export function formatMarkdown(result: ResearchResult): string {
 
 /**
  * Resolve citation indices to actual URLs
- * Replaces [perplexity:N] with actual source URL or inline citation
+ * Handles multiple formats:
+ * - [N] - simple numeric (e.g., [1], [2])
+ * - [perplexity:N] or [Perplexity:N] (case-insensitive)
+ * - [perplexity:1, perplexity:2] (comma-separated in single bracket)
  */
 export function resolveCitations(text: string, execution: ExecutionResult): string {
   const sources = execution.perplexityResult?.sources || [];
   
-  // Replace [perplexity:N] with actual URLs, showing domain name
-  return text.replace(/\[perplexity:(\d+)\]/g, (match, numStr) => {
-    const num = parseInt(numStr, 10);
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'formatting.ts:resolveCitations',message:'Citation resolution input',data:{textLength:text.length,sourcesCount:sources.length,firstSource:sources[0]?.slice(0,50),hasNumericCitations:/\[\d+\]/.test(text),hasPerplexityCitations:/\[perplexity:/i.test(text),sampleText:text.slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
+  // #endregion
+  
+  if (sources.length === 0) {
+    return text; // No sources to resolve
+  }
+  
+  // Helper to resolve a single numeric citation to a URL
+  const resolveNum = (num: number): string | null => {
     const sourceIndex = num - 1; // Citations are 1-indexed
-    
     if (sourceIndex >= 0 && sourceIndex < sources.length) {
       const url = sources[sourceIndex];
-      // Extract domain name for readable link text
       let domain = 'source';
       try {
         const urlObj = new URL(url);
         domain = urlObj.hostname.replace(/^www\./, '');
-      } catch { /* keep 'source' if URL parsing fails */ }
+      } catch { /* keep 'source' */ }
       return `[[${domain}]](${url})`;
     }
-    
-    // Keep original if source not found (shouldn't happen)
-    return match;
+    return null;
+  };
+  
+  let result = text;
+  
+  // Step 1: Handle simple numeric citations [1], [2], etc.
+  // Also handles consecutive like [1][2][4]
+  result = result.replace(/\[(\d+)\]/g, (match, numStr) => {
+    const num = parseInt(numStr, 10);
+    const resolved = resolveNum(num);
+    return resolved || match; // Keep original if not resolved
   });
+  
+  // Step 2: Handle perplexity format [perplexity:N] (case-insensitive)
+  result = result.replace(/\[perplexity:(\d+)\]/gi, (match, numStr) => {
+    const num = parseInt(numStr, 10);
+    const resolved = resolveNum(num);
+    return resolved || match;
+  });
+  
+  // Step 3: Handle comma-separated perplexity citations [perplexity:1, perplexity:2]
+  result = result.replace(/\[([^\]]*perplexity:[^\]]+)\]/gi, (match, inner) => {
+    const citations = inner.split(/,\s*/);
+    const resolved = citations.map((citation: string) => {
+      const numMatch = citation.match(/perplexity:(\d+)/i);
+      if (numMatch) {
+        const num = parseInt(numMatch[1], 10);
+        return resolveNum(num) || `[${citation}]`;
+      }
+      return `[${citation}]`;
+    });
+    return resolved.join(' ');
+  });
+  
+  // #region agent log  
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'formatting.ts:resolveCitations:end',message:'Citation resolution output',data:{resultLength:result.length,hasUnresolvedNumeric:/\[\d+\]/.test(result),hasUnresolvedPerplexity:/\[perplexity:/i.test(result),sampleResult:result.slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
+  // #endregion
+  
+  return result;
 }
 
 /**
