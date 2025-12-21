@@ -705,6 +705,16 @@ Write the answer directly, no preamble.`;
     }
   }
 
+  async plan(
+    query: string, 
+    enrichedContext?: string, 
+    depthLevel?: ComplexityLevel, 
+    options?: ResearchOptions
+  ): Promise<ResearchActionPlan> {
+    if (!this.isInitialized) await this.initialize();
+    return this.getActionPlan(query, enrichedContext, depthLevel, options);
+  }
+
   private async getActionPlan(query: string, ctx?: string, depth?: ComplexityLevel, opts?: ResearchOptions): Promise<ResearchActionPlan> {
     // If depth is explicitly provided, skip consensus planning - just use deterministic plan
     if (depth !== undefined) {

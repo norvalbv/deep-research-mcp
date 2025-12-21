@@ -19,6 +19,7 @@ import { buildPanelOutput, generateFilename, buildEnrichedContext, generateRepor
 import { registerReport } from './storage/report-registry.js';
 import { compressText } from './clients/llm.js';
 import { formatCondensedView, generateSectionSummaries } from './sectioning.js';
+import { startResearchJob } from './job-orchestrator.js';
 
 // Create the MCP server
 const server = new McpServer({
@@ -643,7 +644,7 @@ Use this to efficiently read research without bloating context.`,
       const isJobJson = targetPath.endsWith('.json');
       
       if (isJobJson) {
-        // NEW: Read from job JSON with structured sections
+        // Read from job JSON with structured sections
         const { readFileSync, existsSync } = await import('fs');
         
         if (!existsSync(targetPath)) {
@@ -919,140 +920,22 @@ server.registerTool(
 
     console.error(`[Jobs] Created job ${jobId} for: "${query}"`);
 
-    // Start research in background (don't await)
-    (async () => {
-      try {
-        job.status = 'running';
-        job.progress = 'Executing research...';
-        await saveJob(job); // Persist status change
-        
-        const ctrl = getController();
-        await ctrl.initialize();
-        
-        const enrichedContext = buildEnrichedContext({
-          project_description,
-          current_state,
-          problem_statement,
-          constraints,
-          domain,
-          date_range,
-          papers_read,
-          key_findings,
-          rejected_approaches,
-          output_format,
-          include_code_examples,
-          sub_questions,
-          tech_stack,
-          existing_data_samples,
-          target_metrics,
-        });
+    // Start research job (awaits planning, fires execution in background)
+    const { jobId: startedJobId, determinedDepth, estimatedSeconds } = await startResearchJob(
+      job,
+      params,
+      getController()
+    );
 
-        const result = await ctrl.execute({
-          query,
-          enrichedContext,
-          depthLevel: depth_level as ComplexityLevel,
-          options: {
-            subQuestions: sub_questions || [],
-            constraints: constraints || [],
-            includeCodeExamples: include_code_examples,
-            techStack: tech_stack || [],
-            papersRead: papers_read || [],
-            outputFormat: output_format || 'summary',
-          }
-        });
-
-        job.status = 'completed';
-        job.completedAt = Date.now();
-        job.result = result.markdown;
-        job.progress = 'Complete';
-        
-        // Store structured result directly (no parsing needed later)
-        const structuredResult = result.result;
-        
-        // Convert SynthesisOutput to text for backward compatibility
-        const synthesisText = structuredResult.synthesis.overview + 
-          (structuredResult.synthesis.subQuestions 
-            ? '\n\n' + Object.values(structuredResult.synthesis.subQuestions)
-                .map(sq => `## ${sq.question}\n${sq.answer}`).join('\n\n')
-            : '') +
-          (structuredResult.synthesis.additionalInsights 
-            ? '\n\n## Additional Insights\n' + structuredResult.synthesis.additionalInsights
-            : '');
-        
-        job.structured = {
-          synthesis: synthesisText,
-          critiques: structuredResult.challenge?.critiques,
-          criticalGaps: structuredResult.sufficiency?.criticalGaps,
-          sources: structuredResult.execution.perplexityResult?.sources,
-          papers: structuredResult.execution.arxivPapers?.papers?.map(p => ({
-            id: p.id,
-            title: p.title,
-            summary: p.summary,
-            url: p.url,
-          })),
-          // NEW: Store sections and executive summary
-          sections: result.sections,
-          executiveSummary: result.executiveSummary,
-        };
-        
-          // Always save report file (needed for for_panel and generally useful)
-        try {
-          const reportDir = join(homedir(), 'research-reports');
-          const filename = generateFilename(query);
-          const filepath = join(reportDir, filename);
-          await mkdir(reportDir, { recursive: true });
-          await writeFile(filepath, result.markdown, 'utf-8');
-          job.reportPath = filepath;
-          console.error(`[Jobs] Report saved to: ${filepath}`);
-          
-          // Register JOB FILE (not markdown) in report registry for section reading
-          // The job JSON has structured sections, markdown is just for reading
-          const jobFilePath = join(JOBS_DIR, `${job.id}.json`);
-          const reportId = generateReportId(filepath); // Extract from markdown filename
-          registerReport({
-            path: jobFilePath,  // Job JSON for structured access
-            markdownPath: filepath, // Markdown for human reading
-            reportId: reportId, // Report ID for lookups
-            timestamp: new Date().toISOString(),
-            query: query,
-            summary: job.structured?.synthesis?.slice(0, 200) + '...' || 'Research completed',
-            keyFindings: job.structured?.synthesis?.split('\n').filter(l => l.trim().startsWith('-')).slice(0, 3),
-          });
-        } catch (err) {
-          console.error(`[Jobs] Failed to save report:`, err);
-        }
-        
-        await saveJob(job); // Persist completed result
-        console.error(`[Jobs] Job ${jobId} completed successfully`);
-      } catch (error: any) {
-        job.status = 'failed';
-        job.completedAt = Date.now();
-        job.error = error.message || String(error);
-        job.progress = 'Failed';
-        await saveJob(job); // Persist failure
-        console.error(`[Jobs] Job ${jobId} failed:`, error.message);
-      }
-    })();
-
-    // Calculate estimated wait time based on depth level
-    // Depth 1: 20s (quick lookup), 2: 40s, 3: 80s, 4: 180s (full research)
-    const estimatedSeconds = depth_level
-      ? [20, 40, 80, 180][Math.min(depth_level, 4) - 1]
-      : 120; // Default if depth not specified
-    
-    const depthMessage = depth_level 
-      ? ` (depth ${depth_level})`
-      : '';
-
-    // Return immediately with job ID and EXPLICIT wait instruction
+    // Return with accurate wait time based on determined depth
     return {
       content: [
         {
           type: 'text',
           text: JSON.stringify({
-            job_id: jobId,
+            job_id: startedJobId,
             status: 'pending',
-            message: `Research job started${depthMessage}. IMPORTANT: Wait at LEAST ${estimatedSeconds} seconds before calling check_research_status. Research typically takes about ${Math.round(estimatedSeconds / 60)} minute(s) to complete but can take longer if the research is complex.`,
+            message: `Research job started (depth ${determinedDepth}). IMPORTANT: Wait at LEAST ${estimatedSeconds} seconds before calling check_research_status. Research typically takes about ${Math.round(estimatedSeconds / 60)} minute(s) to complete but can take longer if the research is complex.`,
             estimated_duration_seconds: estimatedSeconds,
             next_action: `Run sleep in the terminal for ${estimatedSeconds} seconds before calling check_research_status. Or alternatively, tell the user you must wait and exit.`,
             query,
@@ -1158,7 +1041,7 @@ Poll this endpoint every ~30 seconds until status is "completed" or "failed".`,
         };
       }
       
-      // NEW: Return condensed view by default if sections are available
+      // Return condensed view by default if sections are available
       if (!full && job.structured?.sections && job.structured?.executiveSummary && job.reportPath) {
         const reportId = generateReportId(job.reportPath);
         
