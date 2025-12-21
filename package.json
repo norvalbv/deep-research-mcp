@@ -24,6 +24,8 @@
     "benchmark": "RUN_LIVE_TESTS=true tsx benchmarks/cli.ts",
     "benchmark:compare": "RUN_LIVE_TESTS=true tsx benchmarks/cli.ts --compare",
     "benchmark:full": "RUN_LIVE_TESTS=true SAMPLE_LIMIT=80 tsx benchmarks/cli.ts --compare",
+    "benchmark:view": "tsx benchmarks/view-results.ts",
+    "benchmark:compare-results": "tsx benchmarks/compare-results.ts",
     "benchmark:generate": "tsx benchmarks/generate-responses.ts",
     "benchmark:generate:sample": "SAMPLE_LIMIT=5 tsx benchmarks/generate-responses.ts",
     "calibrate": "tsx benchmarks/calibration.ts",

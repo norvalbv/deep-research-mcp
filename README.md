@@ -521,3 +521,81 @@ read_report(citation="R-182602", full=true)    # Full report (last resort)
 - [Context7](https://context7.com/) - Library documentation search
 - All contributors and users of this project
 
+## Benchmarking
+
+This project includes comprehensive benchmarking tools to compare MCP research quality against Perplexity baseline:
+
+### Running Benchmarks
+
+```bash
+# Run full benchmark comparison (generates new results)
+npm run benchmark:compare
+
+# View latest benchmark results
+npm run benchmark:view
+
+# Compare multiple benchmark runs over time
+npm run benchmark:compare-results
+```
+
+### Viewing Results
+
+After running benchmarks, you can easily view results anytime:
+
+- **`npm run benchmark:view`** - Shows detailed decision matrix with recommendations
+- **`npm run benchmark:compare-results`** - Compares multiple runs side-by-side with trend indicators (↑↓→)
+
+Example output from `benchmark:view`:
+```
+================================================================================
+DECISION MATRIX: MCP vs Perplexity
+Generated: 2025-12-21T02:17:33.512Z
+Total Comparisons: 69
+================================================================================
+
+RECOMMENDATIONS
+--------------------------------------------------------------------------------
+
+Use Perplexity for:
+  - multi_hop_reasoning (win rate: 80%, p<0.05)
+  - synthesis (win rate: 90%, p<0.05)
+  - latency-critical tasks (<2s vs ~5min)
+
+No clear winner (prefer lower cost):
+  - single_hop_factual (60% vs 40%, p=0.63)
+
+DETAILED BREAKDOWN
+--------------------------------------------------------------------------------
+Category              | MCP Win  | P(Sup)  | 95% CI          | Recommendation
+--------------------------------------------------------------------------------
+single_hop_factual    | 60%      | 0.63    | [-0.80, 1.30]   | TIE
+multi_hop_reasoning   | 20%      | 0.01    | [-2.20, -0.35]  | USE_PERPLEXITY
+
+SWITCHING POINTS:
+  - Simple factual lookup: USE PERPLEXITY (faster)
+```
+
+Example output from `benchmark:compare-results`:
+```
+====================================================================================================
+BENCHMARK COMPARISON
+2 benchmark runs found
+====================================================================================================
+
+Category              | Run 1         | Run 2         
+----------------------|---------------|---------------
+                      | Dec 20, 09:30 | Dec 21, 02:17 
+----------------------|---------------|---------------
+single_hop_factual    | 70%           | 60% ↓         
+multi_hop_reasoning   | 30%           | 20% ↓         
+synthesis             | 10% →         | 10% →         
+
+RECOMMENDATION CHANGES
+----------------------------------------------------------------------------------------------------
+single_hop_factual: Run 1: TIE → Run 2: TIE
+multi_hop_reasoning: Run 1: TIE → Run 2: USE_PERPLEXITY
+
+Legend: ↑ = improved, ↓ = declined, → = stable
+```
+
+Results are stored in `benchmarks/results/` as JSON files with timestamps.
