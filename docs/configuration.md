@@ -176,7 +176,7 @@ If arXiv returns off-topic papers:
 
 ```json
 {
-  "depth_level": 4,
+  "depth_level": 3,
   "include_code_examples": true,
   "output_format": "actionable_steps"
 }
@@ -186,7 +186,7 @@ If arXiv returns off-topic papers:
 
 ```json
 {
-  "depth_level": 5,
+  "depth_level": 4,
   "sub_questions": ["Q1", "Q2", "Q3"],
   "tech_stack": ["python", "langchain"],
   "constraints": ["20 hour budget", "Solo developer"]
