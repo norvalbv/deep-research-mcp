@@ -500,44 +500,44 @@ ${critiquePoints}
 
 ---
 
-**4-TIER TAXONOMY FOR RESEARCH REPORTS** (R-224005)
+**4-TIER TAXONOMY**
 
-CATEGORIZE each critique. Start by checking if it's PEDANTIC (most common for research):
+THE KEY TEST: Does the incompleteness **block the user from understanding or acting** on the research?
 
-**PEDANTIC** (ignore - standard for research reports):
-- Code is "not production-ready" - RESEARCH CODE IS ILLUSTRATIVE BY DESIGN
-- Mock implementations (MockClassName, MockChatOpenAI, etc.)
-- Placeholder API keys (YOUR_API_KEY) - security best practice
-- Incomplete/conceptual code examples - research demonstrates concepts
-- Helper functions undefined - conceptual examples don't need full implementation
-- Missing precise thresholds/metrics - research explores, doesn't always quantify
-- "Qualitative terms without measurable definitions" - research uses descriptive language
-- Suggestions for "more robust" code - robustness is production concern, not research
+**PEDANTIC** (supporting details - omission does NOT block action):
+- Code not production-ready (illustrative code demonstrates concepts)
+- Mock implementations, placeholder API keys
+- Suggestions for "more robust" code
+- Secondary reasoning paths not fully explored
 
-**MINOR** (acceptable - doesn't block understanding):
-- Missing optional examples when enough context exists
-- Could use "more detail" when the concept is clear
-- Minor inconsistencies in numbers that don't affect conclusions
-- Stylistic preferences about organization
+**MINOR** (supporting details - omission does NOT block action):
+- Missing optional examples when concept is clear
+- Could use more detail, but user can still act
+- Minor inconsistencies that don't change conclusions
+- Stylistic/organization preferences
 
-**MAJOR** (only if it actually blocks understanding the research):
-- Missing explanation of a core concept that's central to the query
-- Contradictory recommendations without acknowledging the trade-off
-- Promised section that's completely absent
+**MAJOR** (essential elements - omission BLOCKS understanding or action):
+- Core query not answered or partially addressed
+- Incomplete task coverage (didn't address what was specifically asked)
+- Missing essential information that prevents user from acting
+- Contradictory recommendations without acknowledgment
+- Promised section completely absent
 
-**CRITICAL** (factually wrong - rare in valid research):
-- Factual errors that contradict cited sources
-- Hallucinated citations not in valid formats: [perplexity:N], [arxiv:ID], [context7:X]
-- Dangerous recommendations that could cause harm
+**CRITICAL** (factually wrong - rare):
+- Factual errors contradicting cited sources
+- Hallucinated citations (invalid formats)
+- Dangerous/harmful recommendations
 
 ---
 
 **VOTING RULES**:
 - 1+ CRITICAL → "critique_wins"
 - 3+ MAJOR (and 0 CRITICAL) → "critique_wins"
-- Otherwise → "synthesis_wins" (PEDANTIC and MINOR do not block)
+- Otherwise → "synthesis_wins"
 
-IMPORTANT: Most code completeness concerns are PEDANTIC for research reports.
+ASK: "Can the user understand and act on this research despite this gap?"
+- YES → MINOR or PEDANTIC
+- NO → MAJOR
 
 Return JSON only:
 {
