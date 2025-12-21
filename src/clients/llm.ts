@@ -218,11 +218,11 @@ export function getVotingConfigs(geminiKey?: string): LLMConfig[] {
   // 5x Gemini Flash for consistent, fast voting
   // Using same model multiple times still provides diversity through temperature
   return [
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
+    { provider: 'gemini', model: 'gemini-2.5-flash-lite', apiKey: key },
+    { provider: 'gemini', model: 'gemini-2.5-flash-lite', apiKey: key },
+    { provider: 'gemini', model: 'gemini-2.5-flash-lite', apiKey: key },
+    { provider: 'gemini', model: 'gemini-2.5-flash-lite', apiKey: key },
+    { provider: 'gemini', model: 'gemini-2.5-flash-lite', apiKey: key },
   ];
 }
 
@@ -273,7 +273,7 @@ Text:
 ${text}`, 
     { 
       provider: 'gemini', 
-      model: 'gemini-3-flash-preview', 
+      model: 'gemini-2.5-flash-lite', 
       apiKey: key, 
       maxOutputTokens: 8000,  // Higher to account for internal reasoning tokens
       timeout: 60000  // 60s timeout for compression (thinking tokens can take time)

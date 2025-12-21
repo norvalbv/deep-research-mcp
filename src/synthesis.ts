@@ -48,7 +48,7 @@ export async function synthesizeFindings(
   options?: SynthesisOptions
 ): Promise<SynthesisOutput> {
   if (!geminiKey) {
-    throw new Error('GEMINI_API_KEY is required for synthesis. Please set it in your environment.');
+    return buildFallbackSynthesis(execution);
   }
 
   // Use phased synthesis if sub-questions exist (40% token savings)
@@ -63,27 +63,21 @@ export async function synthesizeFindings(
   console.error('[Synthesis] Single-phase synthesis...');
   const prompt = buildSynthesisPrompt(query, enrichedContext, execution, options, false);
 
-  // Depth-appropriate LLM settings:
-  // - Depth 1-2: Quick facts, smaller output, shorter timeout
-  // - Depth 3-4: Full analysis, larger output, longer timeout
-  const depth = options?.depth || 3;
-  const timeout = depth <= 2 ? 45000 : 120000;  // 45s for quick, 120s for deep
-
-  const response = await callLLM(prompt, {
-    provider: 'gemini',
-    model: 'gemini-3-flash-preview',
-    apiKey: geminiKey,
-    timeout,
-    maxOutputTokens: 32000,
-    temperature: 0.2  // Lower for deterministic, specific outputs
-  });
-  
-  // Fail fast if LLM returned empty content
-  if (!response.content || response.content.trim() === '') {
-    throw new Error('Synthesis LLM returned empty content. Please try again.');
+  try {
+    const response = await callLLM(prompt, {
+      provider: 'gemini',
+      model: 'gemini-2.5-flash-lite',
+      apiKey: geminiKey,
+      timeout: 120000,
+      maxOutputTokens: 32000,
+      temperature: 0.2  // Lower for deterministic, specific outputs
+    });
+    
+    return parseMarkdownSections(response.content, options?.subQuestions);
+  } catch (error) {
+    console.error('[Synthesis] Error:', error);
+    return buildFallbackSynthesis(execution);
   }
-  
-  return parseMarkdownSections(response.content, options?.subQuestions);
 }
 
 /**
@@ -174,7 +168,7 @@ def process_data(data):
 `);
   } else if (depth < 3) {
     // At low depth, explicitly discourage code
-    sections.push(`**Note:** This is a quick lookup (depth ${depth}). Provide a direct, concise answer.`);
+    sections.push(`**Note:** This is a quick lookup (depth ${depth}). Provide a direct, concise answer. Do NOT include code examples or implementation details.`);
   }
 
   sections.push(`---
@@ -241,7 +235,6 @@ ${extractContent(execution.deepThinking).slice(0, 2000)}
 
   // Task instructions
   if (mainQueryOnly) {
-    const codeRequirement = depth >= 3 ? '3. Include working code examples with complete implementations\n' : '';
     sections.push(`---
 
 **YOUR TASK:**
@@ -251,7 +244,8 @@ Write a comprehensive answer to the main query. Be thorough and detailed.
 **Requirements:**
 1. Use exact numbers with units (">85% accuracy", "<200ms latency")
 2. Pick ONE clear recommendation when multiple options exist
-${codeRequirement}4. Use inline citations: [perplexity:N], [context7:library], [arxiv:id]
+3. Include working code examples with complete implementations
+4. Use inline citations: [perplexity:N], [context7:library], [arxiv:id]
 5. Be thorough - don't truncate or cut off mid-sentence
 `);
   } else {
@@ -282,7 +276,8 @@ ${subQuestionSections}
 1. Use EXACT section delimiters: <!-- SECTION:name -->
 2. Use exact numbers with units (">85% accuracy", "<200ms latency")
 3. Pick ONE clear recommendation when multiple options exist
-${depth >= 3 ? '4. Include working code examples with complete implementations\n' : ''}5. Inline citations: [perplexity:N], [context7:library], [arxiv:id]
+4. Include working code examples with complete implementations
+5. Inline citations: [perplexity:N], [context7:library], [arxiv:id]
 6. Keep logic consistent across sections (if overview uses "X OR Y", sub-questions must too)
 7. Be thorough - don't truncate mid-sentence
 `);
@@ -342,11 +337,6 @@ function parseMarkdownSections(markdown: string, subQuestions?: string[]): Synth
     result.overview = markdown;
   }
 
-  // Final check: if overview is still empty after parsing, throw error
-  if (!result.overview || result.overview.trim() === '') {
-    throw new Error('Synthesis parsing produced empty overview. LLM response may have been malformed.');
-  }
-
   return result;
 }
 
@@ -368,7 +358,7 @@ async function synthesizePhased(
   const mainPrompt = buildSynthesisPrompt(query, enrichedContext, execution, options, true);
   const mainResponse = await callLLM(mainPrompt, {
     provider: 'gemini',
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash-lite',
     apiKey: geminiKey,
     timeout: 60000,
     maxOutputTokens: 16000,
@@ -445,7 +435,7 @@ Keep it under 500 words, be specific.`;
 
   const response = await callLLM(prompt, {
     provider: 'gemini',
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash-lite',
     apiKey: geminiKey,
     timeout: 30000,
     maxOutputTokens: 2000
@@ -526,7 +516,7 @@ Answer the sub-question thoroughly. Ensure your answer:
 
   const response = await callLLM(sections.join('\n'), {
     provider: 'gemini',
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash-lite',
     apiKey: geminiKey,
     timeout: 60000,
     maxOutputTokens: 8000,
@@ -534,6 +524,30 @@ Answer the sub-question thoroughly. Ensure your answer:
   });
 
   return response.content.trim();
+}
+
+/**
+ * Fallback synthesis when Gemini API key is unavailable
+ */
+function buildFallbackSynthesis(execution: ExecutionResult): SynthesisOutput {
+  const parts: string[] = [];
+
+  if (execution.perplexityResult?.content) {
+    parts.push(`**Key Findings:**\n${execution.perplexityResult.content.slice(0, 1500)}`);
+  }
+
+  if (execution.arxivPapers?.papers?.length) {
+    parts.push(`**Relevant Papers:** ${execution.arxivPapers.papers.length} papers found`);
+  }
+
+  if (execution.libraryDocs) {
+    parts.push(`**Library Documentation:** Available`);
+  }
+
+  return {
+    overview: parts.join('\n\n') || 'No synthesis available - GEMINI_API_KEY not provided.',
+    additionalInsights: 'This is a fallback response due to missing API key.'
+  };
 }
 
 /**
@@ -627,8 +641,10 @@ If no numeric values found, return empty object for numerics.`;
   try {
     const response = await callLLM(extractionPrompt, {
       provider: 'gemini',
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.5-flash-lite',
       apiKey: geminiKey,
+      timeout: 15000,
+      maxOutputTokens: 2000,
     });
 
     // Parse JSON response

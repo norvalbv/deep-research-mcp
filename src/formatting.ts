@@ -6,6 +6,7 @@ import { ComplexityLevel, Section } from './types/index.js';
 import { ExecutionResult } from './execution.js';
 import { ResearchActionPlan } from './planning.js';
 import { SynthesisOutput } from './synthesis.js';
+import { buildValidationContent } from './validation-content.js';
 
 // Re-define locally to avoid circular import
 interface ChallengeResult {
@@ -83,59 +84,15 @@ export function formatMarkdown(result: ResearchResult): string {
     sections.push('');
   }
 
-  // Validation section
-  sections.push(`## Validation\n`);
-
-  // Critical Challenge - show critique points
-  if (result.challenge) {
-    sections.push(`### Critical Challenge\n`);
-    if (result.challenge.hasSignificantGaps && result.challenge.critiques.length > 0) {
-      result.challenge.critiques.forEach((critique, i) => {
-        sections.push(`${i + 1}. ${critique}`);
-      });
-    } else {
-      sections.push('No significant gaps found in the synthesis.');
-    }
-    sections.push('');
-  }
-
-  // Quality Vote - synthesis vs critique
-  if (result.sufficiency) {
-    sections.push(`### Quality Vote\n`);
-    sections.push(`**Result**: ${result.sufficiency.votesFor} synthesis_wins, ${result.sufficiency.votesAgainst} critique_wins`);
-    
-    // Status message
-    if (result.improved) {
-      sections.push(`**Status**: ⚠️ Synthesis improved after critique identified gaps\n`);
-    } else if (result.sufficiency.sufficient) {
-      sections.push(`**Status**: ✅ Synthesis validated (addresses the query adequately)\n`);
-    } else {
-      sections.push(`**Status**: ⚠️ Critique identified gaps (see below)\n`);
-    }
-
-    // Show critical gaps if any
-    if (result.sufficiency.criticalGaps && result.sufficiency.criticalGaps.length > 0) {
-      sections.push(`**Critical Gaps Identified**:`);
-      result.sufficiency.criticalGaps.forEach((gap) => {
-        sections.push(`- ${gap}`);
-      });
-      sections.push('');
-    }
-
-    // Model reasoning
-    sections.push('**Model Reasoning**:');
-    result.sufficiency.details.forEach((vote) => {
-      const status = vote.vote === 'synthesis_wins' ? '✅' : '❌';
-      sections.push(`- ${status} **${vote.model}**: ${vote.reasoning}`);
-    });
-    sections.push('');
-  }
-
-  // Consensus (secondary validation for depth >= 3)
-  if (result.consensus) {
-    sections.push(`### Multi-Model Consensus\n`);
-    sections.push(result.consensus);
-    sections.push('');
+  // Validation section - skip entirely at depth 1 to save tokens
+  const validationContent = buildValidationContent(
+    { challenge: result.challenge, sufficiency: result.sufficiency, improved: result.improved, consensus: result.consensus },
+    result.complexity,
+    { includeConsensus: true }
+  );
+  if (validationContent) {
+    sections.push(`## Validation\n`);
+    sections.push(validationContent);
   }
 
   return sections.join('\n');
