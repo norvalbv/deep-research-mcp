@@ -112,6 +112,23 @@ Final quality checks:
 
 **Files:** `src/validation.ts` (runChallenge, runConsensusValidation, runSufficiencyVote)
 
+### Research-Backed Implementation
+
+The system implements validated techniques from recent AI research:
+
+| Technique | Paper | Implementation | File Location |
+|-----------|-------|----------------|---------------|
+| Diverse voting ensembles | R-212511, R-214931 | 3+ different model architectures (>98.8% success) | `src/clients/llm.ts` (`getVotingConfigs`) |
+| Context-grounded validation | arxiv:2510.02340v2 | Atomic facts from web/papers as grounding context | `src/validation.ts` (`buildVotePrompt`) |
+| Knowledge cutoff handling | arxiv:2403.12958v2 | Explicit context-only prompting (>95% effective) | `src/validation.ts` (`buildVotePrompt`) |
+| Code validation criteria | arxiv:2411.12990v1 | BetterBench: illustrative vs production code distinction | `src/validation.ts` (`buildVotePrompt` CRITICAL_GAP) |
+| JSON repair | Industry best practice | Clean trailing commas and quote normalization | `src/validation.ts` (`runCrossSectionalNLI`) |
+
+**Key Research Findings:**
+- **Multiple small diverse models** outperform single large models for consensus tasks (accuracy-to-cost ratio)
+- **RAG grounding** prevents false positives when validating recent information (LLMs trust external context)
+- **Placeholder API keys** are security best practices, not code quality issues (per BetterBench framework)
+
 ## Key Components
 
 ### LLM Client

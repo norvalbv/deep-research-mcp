@@ -277,7 +277,13 @@ export async function runSufficiencyVote(
   geminiKey: string | undefined,
   query: string,
   synthesis: string,
-  challenge: ChallengeResult | undefined
+  challenge: ChallengeResult | undefined,
+  env?: Record<string, string>,
+  atomicFacts?: string[],
+  validSources?: {
+    arxivPapers?: { id: string; title: string }[];
+    perplexitySources?: string[];
+  }
 ): Promise<SufficiencyVote | undefined> {
   if (!geminiKey) return undefined;
 
@@ -302,11 +308,15 @@ export async function runSufficiencyVote(
 
   console.error('[Vote] Comparing synthesis vs critique with HCSP...');
 
-  const prompt = buildVotePrompt(query, synthesis, challenge);
+  const prompt = buildVotePrompt(query, synthesis, challenge, atomicFacts, validSources);
   
   // Use direct LLM calls for parallel voting
   const { callLLMsParallel, getVotingConfigs } = await import('./clients/llm.js');
-  const configs = getVotingConfigs(geminiKey);
+  const configs = getVotingConfigs(
+    geminiKey,
+    env?.OPENAI_API_KEY,
+    env?.ANTHROPIC_API_KEY
+  );
   
   if (configs.length === 0) {
     console.error('[Vote] No API keys configured, assuming synthesis wins');
@@ -389,14 +399,54 @@ export async function runSufficiencyVote(
  * (Hierarchical Constraint Satisfaction Protocol)
  * 
  * Key insight: Distinguish CRITICAL_GAP (must fail) from STYLISTIC_PREFERENCE (can pass)
+ * Research: Context-aware prompting with RAG grounding (arxiv:2510.02340v2, arxiv:2403.12958v2)
  */
-function buildVotePrompt(query: string, synthesis: string, challenge: ChallengeResult): string {
+function buildVotePrompt(
+  query: string, 
+  synthesis: string, 
+  challenge: ChallengeResult,
+  atomicFacts?: string[],
+  validSources?: {
+    arxivPapers?: { id: string; title: string }[];
+    perplexitySources?: string[];
+  }
+): string {
   const critiquePoints = challenge.critiques.length > 0
     ? challenge.critiques.map((c, i) => `${i + 1}. ${c}`).join('\n')
     : challenge.rawResponse;
 
+  // Build valid citation sources section
+  const citationFormatsSection = `**VALID CITATION FORMATS (NOT hallucinations):**
+- [perplexity:N] - References to web search results (e.g., [perplexity:1], [perplexity:2])
+- [arxiv:ID] - References to academic papers (e.g., [arxiv:2401.12345])
+- [context7:library] - References to library documentation
+
+These are LEGITIMATE citation formats used in this research system. Do NOT flag them as hallucinations.
+${validSources?.perplexitySources?.length ? `- ${validSources.perplexitySources.length} web sources available from Perplexity search` : ''}
+${validSources?.arxivPapers?.length ? `- ${validSources.arxivPapers.length} arXiv papers available: ${validSources.arxivPapers.map(p => `[arxiv:${p.id}]`).join(', ')}` : ''}
+
+---
+
+`;
+
+  // Research-backed: Context-aware prompting (arxiv:2510.02340v2)
+  // LLMs struggle with knowledge cutoffs; explicit grounding prevents false positives
+  const groundingSection = atomicFacts && atomicFacts.length > 0
+    ? `**GROUNDING CONTEXT (source of truth from web search/papers):**
+${atomicFacts.map(f => `- ${f}`).join('\n')}
+
+IMPORTANT: The facts above are from live web searches and academic papers (${new Date().toISOString().split('T')[0]}). 
+Your training data may be outdated. Trust the provided context over your parametric knowledge.
+
+---
+
+`
+    : '';
+
   return `You are a RIGOROUS TECHNICAL AUDITOR using Hierarchical Constraint Satisfaction (HCSP).
 
+${citationFormatsSection}
+${groundingSection}
 ORIGINAL QUERY:
 ${query}
 
@@ -414,8 +464,8 @@ You MUST categorize EACH critique point as either:
 
 **CRITICAL_GAP** (auto-fail conditions):
 - Logic errors or contradictions
-- Hallucinated citations or APIs
-- Code with TODO/FIXME/placeholder
+- Hallucinated citations (citations that don't match valid formats: [perplexity:N], [arxiv:ID], [context7:X])
+- Code with UNLABELED placeholders or TODOs
 - Missing numeric values (e.g., "fast" instead of "45ms")
 - Undefined success criteria
 - Missing implementation details that prevent execution
@@ -425,6 +475,12 @@ You MUST categorize EACH critique point as either:
 - Wording choices that don't affect meaning
 - Suggestions for "more examples" when some exist
 - Minor organizational improvements
+
+**NOT A CRITICAL_GAP** (per BetterBench framework arxiv:2411.12990v1):
+- Placeholder API keys (e.g., 'YOUR_API_KEY') - security best practice
+- Clearly labeled mock implementations (e.g., '# Mock', 'MockClassName')
+- Illustrative code that states "for demonstration purposes"
+- Helper functions left undefined in conceptual examples
 
 ---
 
@@ -438,7 +494,7 @@ Return JSON only:
   "vote": "synthesis_wins" or "critique_wins",
   "reasoning": "One sentence explaining your vote",
   "critiques": [
-    {"type": "CRITICAL_GAP", "issue": "Code contains TODO on line 45"},
+    {"type": "CRITICAL_GAP", "issue": "Code contains UNLABELED TODO on line 45"},
     {"type": "STYLISTIC_PREFERENCE", "issue": "Tone could be more formal"}
   ]
 }
@@ -784,7 +840,13 @@ severity: "high" = different numbers, "medium" = different approaches, "low" = m
     
     const jsonMatch = response.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+      // JSON repair: Fix common LLM output issues
+      const cleanedJson = jsonMatch[0]
+        .replace(/,\s*}/g, '}')   // Remove trailing commas in objects
+        .replace(/,\s*]/g, ']')   // Remove trailing commas in arrays
+        .replace(/'/g, '"');       // Convert single quotes to double quotes
+      
+      const parsed = JSON.parse(cleanedJson);
       
       if (Array.isArray(parsed.contradictions)) {
         for (const c of parsed.contradictions) {

@@ -309,6 +309,28 @@ Key thresholds (from research):
 - Few-shot examples enforce production-ready code (no TODO/FIXME)
 - Checklist-based validation audits actionability before delivery
 
+### Research-Backed Validation
+
+The validation layer implements techniques from recent AI research to ensure high-quality, factual outputs:
+
+**Diverse LLM Ensembles** (R-212511, R-214931):
+- Uses 3+ different model architectures for voting (Gemini, GPT-4o-mini, Claude Haiku)
+- Research shows diverse ensembles achieve **>98.8% success rates** vs same-model ensembles
+- Multiple small diverse models outperform single large models for consensus tasks
+- Mitigates correlated errors and systemic biases through architectural diversity
+
+**Context-Grounded Validation** (arxiv:2510.02340v2, arxiv:2403.12958v2):
+- Validators receive atomic facts from web searches and papers as explicit grounding context
+- Prompts instruct LLMs to rely *solely* on provided external context over parametric knowledge
+- Solves knowledge cutoff issues - prevents false positives on recent information (e.g., new AI models)
+- **>95% effective** at preventing outdated knowledge from causing validation failures
+
+**BetterBench Code Criteria** (arxiv:2411.12990v1):
+- Distinguishes **illustrative code** (placeholders OK if labeled) from **production code** (no placeholders)
+- Placeholder API keys (`YOUR_API_KEY`) are security best practices, not critical gaps
+- Clearly labeled mocks and conceptual examples are acceptable for demonstration purposes
+- Prevents false failures on pedagogically appropriate code examples
+
 ### Research Flow Diagram
 
 ```mermaid

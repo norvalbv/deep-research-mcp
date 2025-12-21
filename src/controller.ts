@@ -13,7 +13,7 @@ import { executeResearchPlan } from './execution.js';
 import { synthesizeFindings, SynthesisOutput, extractGlobalManifest, formatManifestForPrompt } from './synthesis.js';
 import { runChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, runPVRVerification, getPVRConfig, ChallengeResult, SufficiencyVote } from './validation.js';
 import { GlobalManifest, PVRVerificationResult } from './types/index.js';
-import { formatMarkdown, ResearchResult } from './formatting.js';
+import { formatMarkdown, ResearchResult, resolveCitations } from './formatting.js';
 import { buildValidationContent } from './validation-content.js';
 import { generateSectionSummaries } from './sectioning.js';
 import { compressText } from './clients/llm.js';
@@ -168,7 +168,15 @@ export class ResearchController {
     
     if (shouldRunVoting && challenge?.hasSignificantGaps) {
       console.error('[Research] Running sufficiency vote (synthesis vs critique)...');
-      sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, synthesisText, challenge);
+      sufficiency = await runSufficiencyVote(
+        this.env.GEMINI_API_KEY, 
+        query, 
+        synthesisText, 
+        challenge, 
+        this.env,
+        manifest.keyFacts,
+        challengeContext.validSources
+      );
 
       // Step 6: Re-synthesis if critique wins (max 1 iteration)
       if (sufficiency && !sufficiency.sufficient && sufficiency.criticalGaps.length > 0) {
@@ -189,7 +197,15 @@ export class ResearchController {
         const finalChallenge = await runChallenge(this.env.GEMINI_API_KEY, query, newSynthesisText, challengeContext);
         
         if (finalChallenge?.hasSignificantGaps) {
-          sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, newSynthesisText, finalChallenge);
+          sufficiency = await runSufficiencyVote(
+            this.env.GEMINI_API_KEY, 
+            query, 
+            newSynthesisText, 
+            finalChallenge, 
+            this.env,
+            manifest.keyFacts,
+            challengeContext.validSources
+          );
         } else {
           // No gaps after re-synthesis, synthesis wins
           sufficiency = {
@@ -282,6 +298,7 @@ export class ResearchController {
 
   /**
    * Build Section objects from structured synthesis output + validation data
+   * Resolves [perplexity:N] citations to actual URLs
    */
   private buildSectionsFromResult(
     output: SynthesisOutput,
@@ -291,34 +308,40 @@ export class ResearchController {
       sufficiency?: SufficiencyVote;
       improved?: boolean;
     },
-    execution?: { arxivPapers?: { papers: Array<{ id: string; title: string; summary: string; url: string }> } },
+    execution: { 
+      arxivPapers?: { papers: Array<{ id: string; title: string; summary: string; url: string }> };
+      perplexityResult?: { sources?: string[] };
+    },
     complexity?: ComplexityLevel
   ): Record<string, Section> {
     const sections: Record<string, Section> = {};
     
-    // Overview section
+    // Helper to resolve citations in content
+    const resolve = (text: string) => resolveCitations(text, execution as any);
+    
+    // Overview section - resolve citations
     sections.overview = {
       title: 'Overview',
-      content: output.overview,
+      content: resolve(output.overview),
       summary: '', // Will be filled by generateSectionSummaries
     };
     
-    // Sub-question sections
+    // Sub-question sections - resolve citations
     if (output.subQuestions) {
       for (const [key, value] of Object.entries(output.subQuestions)) {
         sections[key] = {
           title: value.question,
-          content: value.answer,
+          content: resolve(value.answer),
           summary: '', // Will be filled by generateSectionSummaries
         };
       }
     }
     
-    // Additional insights section (if present)
+    // Additional insights section (if present) - resolve citations
     if (output.additionalInsights && output.additionalInsights.trim()) {
       sections.additional_insights = {
         title: 'Additional Insights',
-        content: output.additionalInsights,
+        content: resolve(output.additionalInsights),
         summary: '',
       };
     }

@@ -34,7 +34,11 @@ export async function generateConsensusPlan(
   env?: Record<string, string>
 ): Promise<ResearchActionPlan> {
   const planningPrompt = buildPlanningPrompt(query, enrichedContext, options);
-  const configs = getVotingConfigs(geminiKey);
+  const configs = getVotingConfigs(
+    geminiKey,
+    env?.OPENAI_API_KEY,
+    env?.ANTHROPIC_API_KEY
+  );
 
   if (configs.length === 0) {
     console.error('[Planning] No API keys configured, using fallback plan');
