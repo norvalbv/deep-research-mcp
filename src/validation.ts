@@ -13,6 +13,7 @@ import { ExecutionResult } from './execution.js';
 import { ResearchActionPlan, extractContent } from './planning.js';
 import { DocumentationCache, GlobalManifest, PVRVerificationResult } from './types/index.js';
 import { SynthesisOutput } from './synthesis.js';
+import { parseChallengeResponse, ChallengeResult } from './challenge-parser.js';
 
 /**
  * Safe JSON parsing with repair and fallback.
@@ -67,11 +68,8 @@ const PVR_CONFIG = {
   MIN_CLAIMS_FOR_CHECK: 2,
 };
 
-export interface ChallengeResult {
-  critiques: string[];      // Numbered critique points
-  hasSignificantGaps: boolean;
-  rawResponse: string;
-}
+// Re-export ChallengeResult for backwards compatibility
+export type { ChallengeResult } from './challenge-parser.js';
 
 export interface SufficiencyVote {
   sufficient: boolean;      // true = synthesis wins, false = critique wins
@@ -190,11 +188,11 @@ ${!context?.includeCodeExamples ? `NOTE: This is NON-PROGRAMMING research. Do NO
 
 **ACTIONABILITY CHECKLIST** (flag ANY failures):
 
-□ **Specificity**: Are claims supported with evidence? (vague claims without sources)
-□ **Consistency**: Do conclusions align across sections? Any contradictions?
-${codeChecks}□ **Decision Clarity**: Is there ONE clear recommendation per choice?
-□ **Query Coverage**: Does the synthesis fully address the original query?
-□ **Success Criteria**: Is there a clear answer or conclusion?
+- **Specificity**: Are claims supported with evidence? (vague claims without sources)
+**Consistency**: Do conclusions align across sections? Any contradictions?
+${codeChecks} - **Decision Clarity**: Is there ONE clear recommendation per choice?
+- **Query Coverage**: Does the synthesis fully address the original query?
+- **Success Criteria**: Is there a clear answer or conclusion?
 
 **EVALUATE:**
 1. Which checklist items FAILED? (be specific, cite examples)
@@ -202,57 +200,15 @@ ${codeChecks}□ **Decision Clarity**: Is there ONE clear recommendation per cho
 3. What sub-questions were poorly answered?
 4. Are there CONTRADICTIONS between sections?
 
-If ALL items pass, respond: "No significant gaps found."
+**RESPONSE FORMAT (JSON ONLY):**
 
-Otherwise, return NUMBERED critique points:
-1. [FAILED: Specificity] Claim "X is effective" lacks supporting evidence
-2. [FAILED: Consistency] Section 1 says X, but Section 3 contradicts...
-...`.trim();
-}
+If ALL items pass:
+{"pass":true,"critiques":[]}
 
-/**
- * Parse challenge response into structured result
- */
-function parseChallengeResponse(response: string): ChallengeResult {
-  const content = extractContent(response);
-  
-  // Check for "no gaps" response
-  const noGapsPatterns = [
-    /no significant gaps/i,
-    /synthesis fully addresses/i,
-    /adequately covers/i,
-    /no major gaps/i,
-  ];
-  
-  const hasNoGaps = noGapsPatterns.some(p => p.test(content));
-  
-  if (hasNoGaps) {
-    return {
-      critiques: [],
-      hasSignificantGaps: false,
-      rawResponse: content,
-    };
-  }
-  
-  // Extract numbered critique points
-  const critiquePattern = /^\d+\.\s*(.+)$/gm;
-  const critiques: string[] = [];
-  let match;
-  
-  while ((match = critiquePattern.exec(content)) !== null) {
-    critiques.push(match[1].trim());
-  }
-  
-  // If no numbered points found, treat whole response as single critique
-  if (critiques.length === 0 && content.length > 20) {
-    critiques.push(content);
-  }
-  
-  return {
-    critiques,
-    hasSignificantGaps: critiques.length > 0,
-    rawResponse: content,
-  };
+If ANY items fail:
+{"pass":false,"critiques":["[FAILED: Specificity] Claim X lacks evidence","[FAILED: Consistency] Section 1 contradicts Section 3"]}
+
+Return ONLY valid JSON. No other text.`.trim();
 }
 
 /**
