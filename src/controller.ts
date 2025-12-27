@@ -120,7 +120,7 @@ export class ResearchController {
       query,
       enrichedWithManifest,
       execution,
-      { ...options, depth: complexity }  // Pass depth to gate code examples
+      { ...options, depth: complexity }
     );
     currentStep++;
 
@@ -203,6 +203,9 @@ export class ResearchController {
     // Only run at depth >= 3
     let sufficiency: SufficiencyVote | undefined;
     let improved = false;
+
+    console.error('[Research] Challenge result:', challenge);
+    console.error('[Research] Consensus result:', consensus);
     
     if (shouldRunVoting && challenge?.hasSignificantGaps) {
       emitProgress('Sufficiency Vote', 15);

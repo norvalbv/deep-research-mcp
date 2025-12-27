@@ -166,6 +166,9 @@ def process_data(data):
     pass
 \`\`\`
 `);
+  } else if (!options?.includeCodeExamples) {
+    // Explicitly disable code when flag is false
+    sections.push(`**Note:** Do NOT include code examples, code blocks, or implementation details. Focus on concepts, analysis, and recommendations.`);
   } else if (depth < 3) {
     // At low depth, explicitly discourage code
     sections.push(`**Note:** This is a quick lookup (depth ${depth}). Provide a direct, concise answer. Do NOT include code examples or implementation details.`);
@@ -234,6 +237,10 @@ ${extractContent(execution.deepThinking).slice(0, 2000)}
   }
 
   // Task instructions
+  const codeRequirement = options?.includeCodeExamples
+    ? 'Include working code examples with complete implementations'
+    : 'Do NOT include code examples - focus on concepts and analysis';
+
   if (mainQueryOnly) {
     sections.push(`---
 
@@ -244,7 +251,7 @@ Write a comprehensive answer to the main query. Be thorough and detailed.
 **Requirements:**
 1. Use exact numbers with units (">85% accuracy", "<200ms latency")
 2. Pick ONE clear recommendation when multiple options exist
-3. Include working code examples with complete implementations
+3. ${codeRequirement}
 4. Use inline citations: [perplexity:N], [context7:library], [arxiv:id]
 5. Be thorough - don't truncate or cut off mid-sentence
 `);
@@ -276,7 +283,7 @@ ${subQuestionSections}
 1. Use EXACT section delimiters: <!-- SECTION:name -->
 2. Use exact numbers with units (">85% accuracy", "<200ms latency")
 3. Pick ONE clear recommendation when multiple options exist
-4. Include working code examples with complete implementations
+4. ${codeRequirement}
 5. Inline citations: [perplexity:N], [context7:library], [arxiv:id]
 6. Keep logic consistent across sections (if overview uses "X OR Y", sub-questions must too)
 7. Be thorough - don't truncate mid-sentence
@@ -498,6 +505,11 @@ ${sharedLibraryDocs.slice(0, 1500)}
 `);
   }
 
+  // Respect includeCodeExamples flag
+  const codeInstruction = options?.includeCodeExamples
+    ? '- Include complete, working code examples if relevant'
+    : '- Do NOT include code examples - focus on concepts and analysis';
+
   sections.push(`---
 
 **YOUR TASK:**
@@ -505,13 +517,12 @@ ${sharedLibraryDocs.slice(0, 1500)}
 Answer the sub-question thoroughly. Ensure your answer:
 - Aligns with the key findings above (don't contradict)
 - Uses inline citations: [perplexity:url], [context7:library], [arxiv:id]
-- Includes code examples if relevant
+${codeInstruction}
 - Leverages academic papers if relevant to this specific question
 - Is comprehensive and detailed
 
 **Requirements:**
 - Match the logic from key findings (if overview uses OR, you must too)
-- Include complete, working code examples
 - Be thorough - don't truncate mid-sentence`);
 
   const response = await callLLM(sections.join('\n'), {
