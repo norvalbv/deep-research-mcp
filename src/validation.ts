@@ -100,6 +100,7 @@ export async function runChallenge(
     enrichedContext?: string;
     constraints?: string[];
     subQuestions?: string[];
+    includeCodeExamples?: boolean;  // If false, skip code-related checks
     validSources?: {
       arxivPapers?: { id: string; title: string }[];
       perplexitySources?: string[];
@@ -122,6 +123,7 @@ export async function runChallenge(
 
 /**
  * Build the challenge prompt - designed to find REAL gaps
+ * Domain-aware: code checks only apply when includeCodeExamples is true
  */
 function buildChallengePrompt(
   query: string,
@@ -130,6 +132,7 @@ function buildChallengePrompt(
     enrichedContext?: string;
     constraints?: string[];
     subQuestions?: string[];
+    includeCodeExamples?: boolean;
     validSources?: {
       arxivPapers?: { id: string; title: string }[];
       perplexitySources?: string[];
@@ -155,6 +158,18 @@ function buildChallengePrompt(
         : '')
     : '';
 
+  // Only include code-related checks when code examples were requested
+  const codeChecks = context?.includeCodeExamples 
+    ? `□ **Code Completeness**: Are code examples fully implemented? (no TODO/FIXME)
+□ **Executability**: Can the code be executed WITHOUT extensive modifications?
+`
+    : '';
+
+  // Non-programming research gets different evaluation criteria
+  const researchType = context?.includeCodeExamples 
+    ? 'technical/programming'
+    : 'conceptual/analytical';
+
   return `You are a CRITICAL REVIEWER using a checklist-based audit.
 ${validSourcesSection}
 
@@ -170,14 +185,16 @@ ${synthesis}
 
 ---
 
+**RESEARCH TYPE:** ${researchType}
+${!context?.includeCodeExamples ? `NOTE: This is NON-PROGRAMMING research. Do NOT critique for missing code, executability, or implementation details unless the query specifically requested code.\n` : ''}
+
 **ACTIONABILITY CHECKLIST** (flag ANY failures):
 
-□ **Specificity**: Are ALL thresholds numeric with units? (not "high", "fast", "good")
-□ **Code Completeness**: Are code examples fully implemented? (no TODO/FIXME)
-□ **Consistency**: Do time/cost estimates ADD UP across sections?
-□ **Executability**: Can someone execute this WITHOUT 10+ clarifying questions?
-□ **Decision Clarity**: Is there ONE clear recommendation per choice?
-□ **Success Criteria**: Is there a measurable definition of "done"?
+□ **Specificity**: Are claims supported with evidence? (vague claims without sources)
+□ **Consistency**: Do conclusions align across sections? Any contradictions?
+${codeChecks}□ **Decision Clarity**: Is there ONE clear recommendation per choice?
+□ **Query Coverage**: Does the synthesis fully address the original query?
+□ **Success Criteria**: Is there a clear answer or conclusion?
 
 **EVALUATE:**
 1. Which checklist items FAILED? (be specific, cite examples)
@@ -188,8 +205,8 @@ ${synthesis}
 If ALL items pass, respond: "No significant gaps found."
 
 Otherwise, return NUMBERED critique points:
-1. [FAILED: Specificity] "response time should be under X" - X undefined
-2. [FAILED: Code] Line 45 contains "# TODO"
+1. [FAILED: Specificity] Claim "X is effective" lacks supporting evidence
+2. [FAILED: Consistency] Section 1 says X, but Section 3 contradicts...
 ...`.trim();
 }
 

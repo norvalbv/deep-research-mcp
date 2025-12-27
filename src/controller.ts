@@ -168,6 +168,7 @@ export class ResearchController {
       enrichedContext,
       constraints: options?.constraints,
       subQuestions: options?.subQuestions,
+      includeCodeExamples: options?.includeCodeExamples ?? false,  // Domain-aware validation
       // Include valid sources so challenger knows which citations are legitimate
       validSources: {
         arxivPapers: execution.arxivPapers?.papers?.map(p => ({ id: p.id, title: p.title })),
