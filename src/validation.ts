@@ -60,6 +60,7 @@ export interface SufficiencyVote {
   criticalGaps: string[];   // Issues that caused failure (CRITICAL or excess MAJOR)
   stylisticPreferences: string[]; // Minor/Pedantic issues (informational, non-blocking)
   hasCriticalGap: boolean;  // true if any CRITICAL issues exist
+  failingSections: string[]; // Sections that exceed thresholds (for targeted re-synthesis)
   details: Array<{ 
     model: string; 
     reasoning: string;
@@ -181,13 +182,25 @@ ${codeChecks} - **Decision Clarity**: Is there ONE clear recommendation per choi
 3. What sub-questions were poorly answered?
 4. Are there CONTRADICTIONS between sections?
 
+**SECTION IDs:**
+- "overview" = main answer/query coverage issues
+- "q1", "q2", etc. = specific sub-question issues (match the sub-question number)
+
 **RESPONSE FORMAT (JSON ONLY):**
 
 If ALL items pass:
 {"pass":true,"critiques":[]}
 
-If ANY items fail:
-{"pass":false,"critiques":["[FAILED: Specificity] Claim X lacks evidence","[FAILED: Consistency] Section 1 contradicts Section 3"]}
+If ANY items fail (include section for EACH critique):
+{"pass":false,"critiques":[
+  {"section":"overview","issue":"Query not fully addressed - missing X"},
+  {"section":"q2","issue":"Contradicts overview on metric value"}
+]}
+
+RULES:
+- Each critique MUST have "section" and "issue" fields
+- Use "overview" for query-level, constraint, or cross-section issues
+- Use "q1", "q2", etc. for sub-question-specific issues
 
 Return ONLY valid JSON. No other text.`.trim();
 }
@@ -297,6 +310,7 @@ export async function runSufficiencyVote(
       criticalGaps: [],
       stylisticPreferences: [],
       hasCriticalGap: false,
+      failingSections: [],
       details: [{ 
         model: 'default', 
         reasoning: 'No significant gaps identified in critique',
@@ -324,6 +338,7 @@ export async function runSufficiencyVote(
       criticalGaps: [], 
       stylisticPreferences: [],
       hasCriticalGap: false,
+      failingSections: [],
       details: [] 
     };
   }
@@ -341,6 +356,7 @@ export async function runSufficiencyVote(
       criticalGaps: [], 
       stylisticPreferences: [],
       hasCriticalGap: false,
+      failingSections: [],
       details: [] 
     };
   }
@@ -384,6 +400,30 @@ export async function runSufficiencyVote(
   const uniqueMinorIssues = [...new Set(allMinorIssues)];
   const uniquePedanticIssues = [...new Set(allPedanticIssues)];
   
+  // Collect all critiques with section attribution for per-section analysis
+  const allCritiques: CategorizedCritique[] = validVotes.flatMap(v => v.critiques);
+  
+  // Group critiques by section and apply thresholds per-section (R-220053)
+  const critiquesBySection: Record<string, CategorizedCritique[]> = {};
+  for (const critique of allCritiques) {
+    const section = critique.section || 'overview';
+    if (!critiquesBySection[section]) critiquesBySection[section] = [];
+    critiquesBySection[section].push(critique);
+  }
+  
+  // Calculate failing sections (1+ CRITICAL or 3+ MAJOR in that section)
+  const failingSections: string[] = [];
+  for (const [section, critiques] of Object.entries(critiquesBySection)) {
+    const sectionCounts = { critical: 0, major: 0 };
+    for (const c of critiques) {
+      if (c.category === 'CRITICAL') sectionCounts.critical++;
+      else if (c.category === 'MAJOR') sectionCounts.major++;
+    }
+    if (sectionCounts.critical >= 1 || sectionCounts.major >= 3) {
+      failingSections.push(section);
+    }
+  }
+  
   // Research-backed threshold rules (R-224005):
   // - 1+ CRITICAL → fail
   // - 3+ MAJOR with 0 CRITICAL → fail
@@ -395,6 +435,9 @@ export async function runSufficiencyVote(
   const sufficient = !(hasCriticalGap || hasTooManyMajor);
 
   console.error(`[Vote] Issue Counts - Critical: ${aggregatedCounts.critical}, Major: ${aggregatedCounts.major}, Minor: ${aggregatedCounts.minor}, Pedantic: ${aggregatedCounts.pedantic}`);
+  if (failingSections.length > 0) {
+    console.error(`[Vote] Failing sections: ${failingSections.join(', ')}`);
+  }
   
   // Build the list of gaps that caused failure (for re-synthesis trigger)
   // Include MAJOR issues when they caused the failure (3+ MAJOR with 0 CRITICAL)
@@ -416,6 +459,7 @@ export async function runSufficiencyVote(
     criticalGaps: failureGaps, // Contains issues that caused failure (CRITICAL or excess MAJOR)
     stylisticPreferences: [...uniqueMinorIssues, ...uniquePedanticIssues], // Group Minor+Pedantic as non-blocking
     hasCriticalGap: hasCriticalGap || hasTooManyMajor, // True if ANY blocking issues exist
+    failingSections, // Sections that exceed thresholds (for targeted re-synthesis)
     details: validVotes.map(v => ({ model: v.model, reasoning: v.reasoning, critiques: v.critiques })),
   };
 }
@@ -524,19 +568,26 @@ ASK: "Can the user understand and act on this research despite this gap?"
 - YES → MINOR or PEDANTIC
 - NO → MAJOR
 
+**SECTION IDs for attribution:**
+- "overview" = main answer, query coverage, constraint violations
+- "q1", "q2", etc. = specific sub-question issues
+
 Return JSON only:
 {
   "vote": "synthesis_wins" or "critique_wins",
   "reasoning": "One sentence",
   "counts": { "critical": 0, "major": 1, "minor": 2, "pedantic": 3 },
   "critiques": [
-    {"category": "PEDANTIC", "issue": "Uses MockChatOpenAI for illustration"},
-    {"category": "MINOR", "issue": "Missing specific time estimate"},
-    {"category": "MAJOR", "issue": "Undefined success criteria for dataset quality"}
+    {"category": "PEDANTIC", "section": "q1", "issue": "Uses MockChatOpenAI for illustration"},
+    {"category": "MINOR", "section": "q2", "issue": "Missing specific time estimate"},
+    {"category": "MAJOR", "section": "overview", "issue": "Query not fully addressed"}
   ]
 }
 
-Categorize ALL critiques. Focus on impact, not perfection.`.trim();
+RULES:
+- Each critique MUST include "category", "section", and "issue"
+- Use "overview" for cross-section or query-level issues
+- Categorize ALL critiques. Focus on impact, not perfection.`.trim();
 }
 
 // 4-tier critique categories (R-224005)
@@ -545,6 +596,7 @@ export type CritiqueCategory = 'CRITICAL' | 'MAJOR' | 'MINOR' | 'PEDANTIC';
 export interface CategorizedCritique {
   category: CritiqueCategory;
   issue: string;
+  section: string; // "overview" | "q1" | "q2" | etc. - which section this critique applies to
 }
 
 export interface CritiqueCounts {
@@ -607,7 +659,9 @@ function parseVoteResponse(
             counts.minor++;
           }
           
-          critiques.push({ category, issue: c.issue });
+          // Extract section (default to 'overview' if not specified)
+          const section = (c.section && typeof c.section === 'string') ? c.section : 'overview';
+          critiques.push({ category, issue: c.issue, section });
         }
       }
     }
@@ -624,7 +678,7 @@ function parseVoteResponse(
     if (Array.isArray(parsed.critical_gaps)) {
       for (const gap of parsed.critical_gaps) {
         if (typeof gap === 'string' && gap.length > 0) {
-          critiques.push({ category: 'CRITICAL', issue: gap });
+          critiques.push({ category: 'CRITICAL', issue: gap, section: 'overview' });
           counts.critical++;
         }
       }

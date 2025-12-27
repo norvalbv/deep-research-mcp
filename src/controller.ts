@@ -11,7 +11,7 @@ import { ComplexityLevel, Section, ExecutiveSummary } from './types/index.js';
 import { createFallbackPlan, generateConsensusPlan, ResearchActionPlan } from './planning.js';
 import { executeResearchPlan } from './execution.js';
 import { synthesizeFindings, SynthesisOutput, extractGlobalManifest, formatManifestForPrompt } from './synthesis.js';
-import { runChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, runPVRVerification, getPVRConfig, ChallengeResult, SufficiencyVote } from './validation.js';
+import { runChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, runPVRVerification, getPVRConfig, ChallengeResult, SufficiencyVote, CategorizedCritique } from './validation.js';
 import { GlobalManifest, PVRVerificationResult } from './types/index.js';
 import { formatMarkdown, ResearchResult, resolveCitations } from './formatting.js';
 import { buildValidationContent } from './validation-content.js';
@@ -221,22 +221,37 @@ export class ResearchController {
       );
 
       // Re-synthesis if critique wins (max 1 iteration)
-      if (sufficiency && !sufficiency.sufficient && sufficiency.criticalGaps.length > 0) {
+      // Targeted approach (R-220053): Only re-roll failing sections unless overview fails
+      if (sufficiency && !sufficiency.sufficient && sufficiency.failingSections.length > 0) {
         // Extend total steps for re-synthesis
         totalSteps = 10;
-        emitProgress('Re-synthesis', 40, 'Poor validation results, re-synthesizing with gap awareness so time has extended.');
-        console.error('[Research] Critique wins - re-synthesizing with gaps...');
         improved = true;
         
         // Gather additional data for critical gaps
         await this.gatherDataForGaps(execution, sufficiency.criticalGaps, query);
         currentStep++;
         
-        // Re-synthesize with gap awareness
-        emitProgress('Re-synthesis', 30, 'Addressing critical gaps, re-synthesizing with gap awareness so time has extended.');
-        synthesisOutput = await this.resynthesizeWithGaps(
-          query, enrichedContext, execution, options, sufficiency.criticalGaps, complexity
-        );
+        // Branch: targeted vs full re-synthesis based on which sections failed
+        if (sufficiency.failingSections.includes('overview')) {
+          // Overview failed → full re-synthesis (unavoidable, it's the anchor)
+          emitProgress('Re-synthesis', 40, 'Overview has issues - full re-synthesis required.');
+          console.error('[Research] Overview failed - full re-synthesis with gaps...');
+          synthesisOutput = await this.resynthesizeWithGaps(
+            query, enrichedContext, execution, options, sufficiency.criticalGaps, complexity
+          );
+        } else {
+          // Only sub-questions failed → targeted re-roll (keep overview as anchor)
+          const failingCount = sufficiency.failingSections.length;
+          emitProgress('Re-synthesis', 40, `Re-rolling ${failingCount} failing section(s): ${sufficiency.failingSections.join(', ')}`);
+          console.error(`[Research] Targeted re-roll of ${failingCount} sections: ${sufficiency.failingSections.join(', ')}`);
+          synthesisOutput = await this.rerollFailingSections(
+            synthesisOutput,
+            sufficiency.failingSections,
+            sufficiency.details.flatMap(d => d.critiques),
+            execution,
+            options
+          );
+        }
         
         const newSynthesisText = this.synthesisOutputToText(synthesisOutput);
         currentStep++;
@@ -263,6 +278,7 @@ export class ResearchController {
             details: [{ model: 'default', reasoning: 'No gaps after re-synthesis', critiques: [] }],
             stylisticPreferences: [],
             hasCriticalGap: false,
+            failingSections: [],
           };
         }
       }
@@ -274,6 +290,7 @@ export class ResearchController {
         details: [{ model: 'default', reasoning: 'Challenge found no significant gaps', critiques: [] }],
         stylisticPreferences: [],
         hasCriticalGap: false,
+        failingSections: [],
       };
     }
     currentStep++;
@@ -576,6 +593,115 @@ export class ResearchController {
     }
 
     return result;
+  }
+
+  /**
+   * Targeted re-roll: Only re-synthesize sections that failed validation
+   * Based on R-220053 (granular validation) - anchor on overview as source of truth
+   */
+  private async rerollFailingSections(
+    synthesis: SynthesisOutput,
+    failingSections: string[],
+    critiques: CategorizedCritique[],
+    execution: any,
+    options: ResearchOptions | undefined
+  ): Promise<SynthesisOutput> {
+    // Keep overview as anchor (source of truth)
+    const result: SynthesisOutput = {
+      overview: synthesis.overview,
+      subQuestions: { ...synthesis.subQuestions },
+      additionalInsights: synthesis.additionalInsights,
+    };
+
+    // Re-roll each failing section
+    for (const sectionId of failingSections) {
+      // Skip overview - if overview fails, caller should use full re-synthesis
+      if (sectionId === 'overview' || !result.subQuestions?.[sectionId]) continue;
+
+      const subQ = result.subQuestions[sectionId];
+      const subQIndex = parseInt(sectionId.replace('q', ''), 10) - 1;
+      const subQData = execution.subQuestionResults?.[subQIndex];
+
+      // Build critique context for this section
+      const sectionCritiques = critiques
+        .filter(c => c.section === sectionId)
+        .map(c => `[${c.category}] ${c.issue}`)
+        .join('\n');
+
+      console.error(`[Research] Re-rolling section ${sectionId} due to critiques: ${sectionCritiques.slice(0, 100)}...`);
+
+      // Build re-roll prompt with critique context
+      const rerollPrompt = this.buildCritiqueRerollPrompt(
+        subQ.question,
+        synthesis.overview,
+        sectionCritiques,
+        subQData,
+        options
+      );
+
+      try {
+        const { callLLM } = await import('./clients/llm.js');
+        const response = await callLLM(rerollPrompt, {
+          provider: 'gemini',
+          model: 'gemini-2.5-flash-lite',
+          apiKey: this.env.GEMINI_API_KEY,
+          timeout: 30000,
+          maxOutputTokens: 4000,
+          temperature: 0.2,
+        });
+
+        result.subQuestions[sectionId] = {
+          question: subQ.question,
+          answer: response.content.trim(),
+        };
+      } catch (error) {
+        console.error(`[Research] Failed to re-roll ${sectionId}:`, error);
+        // Keep original on failure
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Build prompt for critique-driven re-rolling
+   * Includes specific critiques to address
+   */
+  private buildCritiqueRerollPrompt(
+    question: string,
+    overviewAnchor: string,
+    critiqueContext: string,
+    subQData?: any,
+    options?: ResearchOptions
+  ): string {
+    const dataSection = subQData?.perplexityResult?.content
+      ? `\nResearch Data:\n${subQData.perplexityResult.content.slice(0, 1500)}\n`
+      : '';
+
+    const codeInstruction = options?.includeCodeExamples
+      ? 'Include complete, working code examples if relevant.'
+      : 'Do NOT include code examples - focus on concepts and analysis.';
+
+    return `You are re-synthesizing a section that FAILED quality validation.
+
+SUB-QUESTION: ${question}
+
+ANCHOR (main overview - this is the source of truth):
+${overviewAnchor.slice(0, 2000)}
+
+CRITIQUES TO ADDRESS (you MUST fix these issues):
+${critiqueContext}
+
+${dataSection}
+
+YOUR TASK:
+Re-write the answer to this sub-question so that it:
+1. ADDRESSES all the critiques listed above
+2. ALIGNS with the anchor overview
+3. Provides specific evidence and citations
+4. ${codeInstruction}
+
+Write the answer directly, no preamble.`;
   }
 
   /**
