@@ -160,8 +160,8 @@ function buildChallengePrompt(
 
   // Only include code-related checks when code examples were requested
   const codeChecks = context?.includeCodeExamples 
-    ? `□ **Code Completeness**: Are code examples fully implemented? (no TODO/FIXME)
-□ **Executability**: Can the code be executed WITHOUT extensive modifications?
+    ? `**Code Completeness**: Are code examples fully implemented? (no TODO/FIXME)
+**Executability**: Can the code be executed WITHOUT extensive modifications?
 `
     : '';
 
