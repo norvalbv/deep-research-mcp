@@ -155,7 +155,8 @@ Returns validated markdown report with:
       include_code_examples: z
         .boolean()
         .optional()
-        .describe('Whether to include code examples in results. Default: true'),
+        .default(false)
+        .describe('Request code snippets in the synthesis output. Only enable for software/programming research. Default: false (keeps reports focused on concepts/analysis for non-technical topics).'),
       
       sub_questions: z
         .array(z.string())
@@ -262,7 +263,7 @@ Returns validated markdown report with:
         options: {
           subQuestions: sub_questions,
           constraints,
-          includeCodeExamples: include_code_examples,
+          includeCodeExamples: include_code_examples ?? false,
           techStack: tech_stack,
           papersRead: papers_read,
           outputFormat: output_format,
@@ -891,7 +892,8 @@ server.registerTool(
       include_code_examples: z
         .boolean()
         .optional()
-        .describe('Whether to include code examples in results. Default: true'),
+        .default(false)
+        .describe('Request code snippets in the synthesis output. Only enable for software/programming research. Default: false (keeps reports focused on concepts/analysis for non-technical topics).'),
       
       sub_questions: z
         .array(z.string())

@@ -84,7 +84,7 @@ export async function startResearchJob(
   const actionPlan = await controller.plan(query, enrichedContext, depth_level as ComplexityLevel, {
     subQuestions: params.sub_questions || [],
     constraints: params.constraints || [],
-    includeCodeExamples: params.include_code_examples,
+    includeCodeExamples: params.include_code_examples ?? false,
     techStack: params.tech_stack || [],
     papersRead: params.papers_read || [],
     outputFormat: params.output_format || 'summary',
@@ -132,7 +132,7 @@ async function executeResearchInBackground(
       options: {
         subQuestions: params.sub_questions || [],
         constraints: params.constraints || [],
-        includeCodeExamples: params.include_code_examples,
+        includeCodeExamples: params.include_code_examples ?? false,
         techStack: params.tech_stack || [],
         papersRead: params.papers_read || [],
         outputFormat: params.output_format || 'summary',
