@@ -16,44 +16,28 @@ import { SynthesisOutput } from './synthesis.js';
 import { parseChallengeResponse, ChallengeResult } from './challenge-parser.js';
 
 /**
- * Safe JSON parsing with repair and fallback.
- * Handles common LLM output issues (trailing commas, unescaped quotes, etc.)
+ * Safe JSON parsing with minimal repair and fallback.
  * 
- * @param text - The raw text that should contain JSON
- * @param fallback - Default value to return if parsing fails
- * @returns Parsed JSON or fallback value
+ * @param text - Raw text containing JSON (may have markdown wrapper)
+ * @param fallback - Default value if parsing fails
  */
 export function safeParseJSON<T>(text: string, fallback: T): T {
-  // Step 1: Extract JSON object/array from text
-  const jsonMatch = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-  if (!jsonMatch) {
-    return fallback;
-  }
+  // Extract JSON from text (handles markdown code blocks)
+  const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+  if (!match) return fallback;
 
-  // Step 2: Apply repairs for common LLM output issues
-  let cleaned = jsonMatch[0]
-    .replace(/,\s*([}\]])/g, '$1')           // Remove trailing commas
+  // Apply common LLM output repairs
+  const cleaned = match[0]
+    .replace(/,\s*([}\]])/g, '$1')             // Remove trailing commas
     .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":') // Quote unquoted keys
-    .replace(/:\s*'([^']*)'/g, ': "$1"')     // Single to double quotes in values
-    .replace(/[\x00-\x1F\x7F]/g, ' ')        // Remove control characters
-    .replace(/\n/g, '\\n')                   // Escape newlines in strings
-    .replace(/\t/g, '\\t');                  // Escape tabs
+    .replace(/:\s*'([^']*)'/g, ': "$1"');      // Single to double quotes
 
-  // Step 3: Try parsing
+  // Try parsing, fallback to control char cleanup if needed
   try {
     return JSON.parse(cleaned);
   } catch {
-    // Step 4: More aggressive repair - escape unescaped quotes within strings
     try {
-      // Find string values and escape internal quotes
-      cleaned = cleaned.replace(/"([^"]*?)(?<!\\)"([^"]*?)"/g, (match, before, after) => {
-        if (after.includes(':') || after.includes(',') || after.includes('}')) {
-          // This looks like a broken string boundary, try to fix
-          return `"${before}\\"${after}"`;
-        }
-        return match;
-      });
-      return JSON.parse(cleaned);
+      return JSON.parse(cleaned.replace(/[\x00-\x1F\x7F]/g, ' '));
     } catch {
       return fallback;
     }
@@ -72,15 +56,12 @@ const PVR_CONFIG = {
 export type { ChallengeResult } from './challenge-parser.js';
 
 export interface SufficiencyVote {
-  sufficient: boolean;      // true = synthesis wins, false = critique wins
-  votesFor: number;         // synthesis_wins votes
-  votesAgainst: number;     // critique_wins votes
-  criticalGaps: string[];   // CRITICAL_GAP issues identified
-  stylisticPreferences: string[]; // STYLISTIC_PREFERENCE issues (informational)
-  hasCriticalGap: boolean;  // HCSP: if true, auto-fail regardless of vote count
+  sufficient: boolean;      // true = passes thresholds, false = exceeds issue thresholds
+  criticalGaps: string[];   // Issues that caused failure (CRITICAL or excess MAJOR)
+  stylisticPreferences: string[]; // Minor/Pedantic issues (informational, non-blocking)
+  hasCriticalGap: boolean;  // true if any CRITICAL issues exist
   details: Array<{ 
     model: string; 
-    vote: 'synthesis_wins' | 'critique_wins'; 
     reasoning: string;
     critiques: CategorizedCritique[];
   }>;
@@ -308,19 +289,16 @@ export async function runSufficiencyVote(
 ): Promise<SufficiencyVote | undefined> {
   if (!geminiKey) return undefined;
 
-  // If no challenge or no gaps found, synthesis wins by default
+  // If no challenge or no gaps found, synthesis passes by default
   if (!challenge || !challenge.hasSignificantGaps) {
-    console.error('[Vote] No significant critique - synthesis wins by default');
+    console.error('[Vote] No significant critique - synthesis passes');
     return {
       sufficient: true,
-      votesFor: 1,
-      votesAgainst: 0,
       criticalGaps: [],
       stylisticPreferences: [],
       hasCriticalGap: false,
       details: [{ 
         model: 'default', 
-        vote: 'synthesis_wins', 
         reasoning: 'No significant gaps identified in critique',
         critiques: [],
       }],
@@ -340,11 +318,9 @@ export async function runSufficiencyVote(
   );
   
   if (configs.length === 0) {
-    console.error('[Vote] No API keys configured, assuming synthesis wins');
+    console.error('[Vote] No API keys configured, assuming synthesis passes');
     return { 
       sufficient: true, 
-      votesFor: 0, 
-      votesAgainst: 0, 
       criticalGaps: [], 
       stylisticPreferences: [],
       hasCriticalGap: false,
@@ -359,11 +335,9 @@ export async function runSufficiencyVote(
     .map(r => parseVoteResponse(r.content, r.model));
 
   if (validVotes.length === 0) {
-    console.error('[Vote] All votes failed, assuming synthesis wins');
+    console.error('[Vote] All votes failed, assuming synthesis passes');
     return { 
       sufficient: true, 
-      votesFor: 0, 
-      votesAgainst: 0, 
       criticalGaps: [], 
       stylisticPreferences: [],
       hasCriticalGap: false,
@@ -417,15 +391,10 @@ export async function runSufficiencyVote(
   const hasCriticalGap = aggregatedCounts.critical > 0 || uniqueCriticalIssues.length > 0;
   const hasTooManyMajor = aggregatedCounts.major >= 3 && !hasCriticalGap;
   
-  // Count votes for logging
-  const synthesisWins = validVotes.filter(v => v.vote === 'synthesis_wins').length;
-  const critiqueWins = validVotes.filter(v => v.vote === 'critique_wins').length;
-  
   // Apply threshold-based decision (R-224005)
   const sufficient = !(hasCriticalGap || hasTooManyMajor);
 
-  console.error(`[Vote] 4-Tier Result: ${synthesisWins} synthesis_wins, ${critiqueWins} critique_wins`);
-  console.error(`[Vote] Counts - Critical: ${aggregatedCounts.critical}, Major: ${aggregatedCounts.major}, Minor: ${aggregatedCounts.minor}, Pedantic: ${aggregatedCounts.pedantic}`);
+  console.error(`[Vote] Issue Counts - Critical: ${aggregatedCounts.critical}, Major: ${aggregatedCounts.major}, Minor: ${aggregatedCounts.minor}, Pedantic: ${aggregatedCounts.pedantic}`);
   
   // Build the list of gaps that caused failure (for re-synthesis trigger)
   // Include MAJOR issues when they caused the failure (3+ MAJOR with 0 CRITICAL)
@@ -444,12 +413,10 @@ export async function runSufficiencyVote(
 
   return {
     sufficient,
-    votesFor: synthesisWins,
-    votesAgainst: critiqueWins,
     criticalGaps: failureGaps, // Contains issues that caused failure (CRITICAL or excess MAJOR)
     stylisticPreferences: [...uniqueMinorIssues, ...uniquePedanticIssues], // Group Minor+Pedantic as non-blocking
     hasCriticalGap: hasCriticalGap || hasTooManyMajor, // True if ANY blocking issues exist
-    details: validVotes,
+    details: validVotes.map(v => ({ model: v.model, reasoning: v.reasoning, critiques: v.critiques })),
   };
 }
 

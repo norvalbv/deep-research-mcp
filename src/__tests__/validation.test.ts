@@ -67,6 +67,47 @@ describe('safeParseJSON', () => {
       const result = safeParseJSON(input, {});
       expect(result).toHaveProperty('key');
     });
+
+    it('parses JSON with structural newlines (LLM challenge response format)', () => {
+      // This reproduces the bug where critiques were returned as [] 
+      // even though the LLM returned valid JSON with critiques.
+      // Root cause: safeParseJSON was breaking JSON with structural newlines.
+      const input = `\`\`\`json
+{
+  "pass": false,
+  "critiques": [
+    "[FAILED: Specificity] The claim lacks citation",
+    "[FAILED: Consistency] Section 1 contradicts Section 3"
+  ]
+}
+\`\`\``;
+      const result = safeParseJSON<{ pass: boolean; critiques: string[] }>(
+        input,
+        { pass: true, critiques: [] }
+      );
+      expect(result.pass).toBe(false);
+      expect(result.critiques).toHaveLength(2);
+      expect(result.critiques[0]).toContain('[FAILED: Specificity]');
+      expect(result.critiques[1]).toContain('[FAILED: Consistency]');
+    });
+
+    it('parses complex challenge response with many critiques', () => {
+      // Real-world LLM output structure with multiple newlines and long strings
+      const input = `{
+  "pass": false,
+  "critiques": [
+    "[FAILED: Specificity] The claim that 'Academic research supports this granular approach' is not supported by a specific citation.",
+    "[FAILED: Specificity] The reference to '[arxiv:id]' is not a valid citation.",
+    "[FAILED: Query Coverage] The synthesis addresses all questions but lacks depth."
+  ]
+}`;
+      const result = safeParseJSON<{ pass: boolean; critiques: string[] }>(
+        input,
+        { pass: true, critiques: [] }
+      );
+      expect(result.pass).toBe(false);
+      expect(result.critiques).toHaveLength(3);
+    });
   });
 
   describe('NLI contradiction response format', () => {

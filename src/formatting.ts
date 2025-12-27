@@ -16,11 +16,9 @@ interface ChallengeResult {
 }
 
 interface SufficiencyVote {
-  sufficient: boolean;      // true = synthesis wins
-  votesFor: number;         // synthesis_wins votes
-  votesAgainst: number;     // critique_wins votes
-  criticalGaps: string[];   // Gaps if critique wins
-  details: Array<{ model: string; vote: 'synthesis_wins' | 'critique_wins'; reasoning: string }>;
+  sufficient: boolean;      // true = passes thresholds
+  criticalGaps: string[];   // Issues that caused failure
+  details: Array<{ model: string; reasoning: string }>;
 }
 
 export interface ResearchResult {

@@ -12,10 +12,8 @@ interface ChallengeResult {
 
 interface SufficiencyVote {
   sufficient: boolean;
-  votesFor: number;
-  votesAgainst: number;
   criticalGaps: string[];
-  details: Array<{ model: string; vote: 'synthesis_wins' | 'critique_wins'; reasoning: string }>;
+  details: Array<{ model: string; reasoning: string }>;
 }
 
 export interface ValidationData {
@@ -55,15 +53,15 @@ export function buildValidationContent(
 
   // Quality Vote
   if (validation.sufficiency) {
-    parts.push('### Quality Vote\n');
-    parts.push(`**Result**: ${validation.sufficiency.votesFor} synthesis_wins, ${validation.sufficiency.votesAgainst} critique_wins`);
+    parts.push('### Quality Assessment\n');
+    parts.push(`**Result**: ${validation.sufficiency.sufficient ? 'Passes quality thresholds' : 'Exceeds issue thresholds'}`);
 
     if (validation.improved) {
       parts.push('**Status**: Synthesis improved after critique identified gaps\n');
     } else if (validation.sufficiency.sufficient) {
       parts.push('**Status**: Synthesis validated (addresses the query adequately)\n');
     } else {
-      parts.push('**Status**: Critique identified gaps (see below)\n');
+      parts.push('**Status**: Quality issues identified (see below)\n');
     }
 
     if (validation.sufficiency.criticalGaps && validation.sufficiency.criticalGaps.length > 0) {
@@ -74,12 +72,13 @@ export function buildValidationContent(
       parts.push('');
     }
 
-    parts.push('**Model Reasoning**:');
-    validation.sufficiency.details.forEach((vote) => {
-      const status = vote.vote === 'synthesis_wins' ? 'PASS' : 'FAIL';
-      parts.push(`- ${status} **${vote.model}**: ${vote.reasoning}`);
-    });
-    parts.push('');
+    if (validation.sufficiency.details.length > 0) {
+      parts.push('**Model Reasoning**:');
+      validation.sufficiency.details.forEach((detail) => {
+        parts.push(`- **${detail.model}**: ${detail.reasoning}`);
+      });
+      parts.push('');
+    }
   }
 
   // Consensus (optional - formatting.ts includes it, controller.ts has it separate)

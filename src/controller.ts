@@ -259,10 +259,8 @@ export class ResearchController {
           // No gaps after re-synthesis, synthesis wins
           sufficiency = {
             sufficient: true,
-            votesFor: 1,
-            votesAgainst: 0,
             criticalGaps: [],
-            details: [{ model: 'default', vote: 'synthesis_wins', reasoning: 'No gaps after re-synthesis', critiques: [] }],
+            details: [{ model: 'default', reasoning: 'No gaps after re-synthesis', critiques: [] }],
             stylisticPreferences: [],
             hasCriticalGap: false,
           };
@@ -272,10 +270,8 @@ export class ResearchController {
       console.error('[Research] No significant gaps - skipping vote');
       sufficiency = {
         sufficient: true,
-        votesFor: 1,
-        votesAgainst: 0,
         criticalGaps: [],
-        details: [{ model: 'default', vote: 'synthesis_wins', reasoning: 'Challenge found no significant gaps', critiques: [] }],
+        details: [{ model: 'default', reasoning: 'Challenge found no significant gaps', critiques: [] }],
         stylisticPreferences: [],
         hasCriticalGap: false,
       };
@@ -444,7 +440,7 @@ export class ResearchController {
     sufficiency?: SufficiencyVote
   ): 'high' | 'medium' | 'low' {
     if (sufficiency && !sufficiency.sufficient) return 'low';
-    if (complexity >= 4 && (sufficiency?.votesFor ?? 0) >= 2) return 'high';
+    if (complexity >= 4 && sufficiency?.sufficient) return 'high';
     if (complexity >= 3) return 'medium';
     return 'medium';
   }
