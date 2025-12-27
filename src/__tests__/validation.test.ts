@@ -13,6 +13,144 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { safeParseJSON } from '../validation.js';
+
+// ============================================================================
+// safeParseJSON - Robust JSON Parsing for LLM Output
+// ============================================================================
+
+describe('safeParseJSON', () => {
+  describe('valid JSON', () => {
+    it('parses simple valid JSON', () => {
+      const result = safeParseJSON('{"key": "value"}', {});
+      expect(result).toEqual({ key: 'value' });
+    });
+
+    it('parses nested JSON', () => {
+      const result = safeParseJSON('{"arr": [1, 2], "obj": {"a": 1}}', {});
+      expect(result).toEqual({ arr: [1, 2], obj: { a: 1 } });
+    });
+
+    it('parses JSON with markdown wrapper', () => {
+      const input = `Here is the response:
+\`\`\`json
+{"contradictions": []}
+\`\`\``;
+      const result = safeParseJSON(input, { contradictions: ['fallback'] });
+      expect(result).toEqual({ contradictions: [] });
+    });
+  });
+
+  describe('common LLM output issues', () => {
+    it('handles trailing commas in objects', () => {
+      const result = safeParseJSON('{"a": 1, "b": 2,}', {});
+      expect(result).toEqual({ a: 1, b: 2 });
+    });
+
+    it('handles trailing commas in arrays', () => {
+      const result = safeParseJSON('{"arr": [1, 2, 3,]}', {});
+      expect(result).toEqual({ arr: [1, 2, 3] });
+    });
+
+    it('handles unquoted keys', () => {
+      const result = safeParseJSON('{key: "value", another: 123}', {});
+      expect(result).toEqual({ key: 'value', another: 123 });
+    });
+
+    it('handles single quotes in values', () => {
+      const result = safeParseJSON("{\"key\": 'value'}", {});
+      expect(result).toEqual({ key: 'value' });
+    });
+
+    it('handles control characters', () => {
+      const input = '{"key": "value\twith\ttabs"}';
+      const result = safeParseJSON(input, {});
+      expect(result).toHaveProperty('key');
+    });
+  });
+
+  describe('NLI contradiction response format', () => {
+    it('parses valid contradiction response', () => {
+      const input = '{"contradictions":[{"claimA":1,"claimB":3,"reasonCode":"NUMERIC_CONFLICT","severity":"high"}]}';
+      const result = safeParseJSON<{ contradictions: Array<{ claimA: number; claimB: number; reasonCode: string; severity: string }> }>(
+        input,
+        { contradictions: [] }
+      );
+      expect(result.contradictions).toHaveLength(1);
+      expect(result.contradictions[0].claimA).toBe(1);
+      expect(result.contradictions[0].reasonCode).toBe('NUMERIC_CONFLICT');
+    });
+
+    it('parses empty contradiction response', () => {
+      const result = safeParseJSON('{"contradictions":[]}', { contradictions: ['default'] });
+      expect(result.contradictions).toHaveLength(0);
+    });
+
+    it('handles legacy reason field with quotes (the actual bug case)', () => {
+      // This is the format that was causing the JSON parse error
+      // The "reason" field contains quotes that break JSON
+      const problematicInput = '{"contradictions":[{"claimA":1,"claimB":2,"reason":"Section A says \\"0.85\\" but B says \\"0.75\\"","severity":"high"}]}';
+      const result = safeParseJSON(problematicInput, { contradictions: [] });
+      // Should fallback gracefully rather than throw
+      expect(result).toBeDefined();
+    });
+
+    it('handles multiline LLM response with explanation text', () => {
+      const input = `Based on my analysis, here are the contradictions I found:
+
+{"contradictions": [{"claimA": 1, "claimB": 5, "reasonCode": "COST_CONFLICT", "severity": "high"}]}
+
+Let me know if you need more details.`;
+      const result = safeParseJSON<{ contradictions: Array<{ claimA: number }> }>(input, { contradictions: [] });
+      expect(result.contradictions).toHaveLength(1);
+      expect(result.contradictions[0].claimA).toBe(1);
+    });
+  });
+
+  describe('fallback behavior', () => {
+    it('returns fallback for completely invalid input', () => {
+      const result = safeParseJSON('not json at all', { default: true });
+      expect(result).toEqual({ default: true });
+    });
+
+    it('returns fallback for empty string', () => {
+      const result = safeParseJSON('', { fallback: 'value' });
+      expect(result).toEqual({ fallback: 'value' });
+    });
+
+    it('returns fallback for truncated JSON', () => {
+      const result = safeParseJSON('{"key": "val', { complete: false });
+      expect(result).toEqual({ complete: false });
+    });
+
+    it('returns typed fallback', () => {
+      interface MyType { items: string[] }
+      const result = safeParseJSON<MyType>('invalid', { items: ['default'] });
+      expect(result.items).toContain('default');
+    });
+  });
+
+  describe('edge cases from production', () => {
+    it('handles JSON with newlines in string values', () => {
+      const input = '{"description": "Line 1\\nLine 2"}';
+      const result = safeParseJSON(input, {});
+      expect(result).toHaveProperty('description');
+    });
+
+    it('handles mixed quote styles', () => {
+      const input = "{\"key\": 'single', 'another': \"double\"}";
+      // This is malformed but should be handled gracefully
+      const result = safeParseJSON(input, { fallback: true });
+      expect(result).toBeDefined();
+    });
+
+    it('handles deeply nested structures', () => {
+      const input = '{"a":{"b":{"c":{"d":"value"}}}}';
+      const result = safeParseJSON<{ a: { b: { c: { d: string } } } }>(input, { a: { b: { c: { d: 'fallback' } } } });
+      expect(result.a.b.c.d).toBe('value');
+    });
+  });
+});
 
 // ============================================================================
 // Vote Response Parsing (Structural - parsing LLM JSON output)

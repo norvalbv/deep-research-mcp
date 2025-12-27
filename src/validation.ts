@@ -14,6 +14,51 @@ import { ResearchActionPlan, extractContent } from './planning.js';
 import { DocumentationCache, GlobalManifest, PVRVerificationResult } from './types/index.js';
 import { SynthesisOutput } from './synthesis.js';
 
+/**
+ * Safe JSON parsing with repair and fallback.
+ * Handles common LLM output issues (trailing commas, unescaped quotes, etc.)
+ * 
+ * @param text - The raw text that should contain JSON
+ * @param fallback - Default value to return if parsing fails
+ * @returns Parsed JSON or fallback value
+ */
+export function safeParseJSON<T>(text: string, fallback: T): T {
+  // Step 1: Extract JSON object/array from text
+  const jsonMatch = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+  if (!jsonMatch) {
+    return fallback;
+  }
+
+  // Step 2: Apply repairs for common LLM output issues
+  let cleaned = jsonMatch[0]
+    .replace(/,\s*([}\]])/g, '$1')           // Remove trailing commas
+    .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":') // Quote unquoted keys
+    .replace(/:\s*'([^']*)'/g, ': "$1"')     // Single to double quotes in values
+    .replace(/[\x00-\x1F\x7F]/g, ' ')        // Remove control characters
+    .replace(/\n/g, '\\n')                   // Escape newlines in strings
+    .replace(/\t/g, '\\t');                  // Escape tabs
+
+  // Step 3: Try parsing
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // Step 4: More aggressive repair - escape unescaped quotes within strings
+    try {
+      // Find string values and escape internal quotes
+      cleaned = cleaned.replace(/"([^"]*?)(?<!\\)"([^"]*?)"/g, (match, before, after) => {
+        if (after.includes(':') || after.includes(',') || after.includes('}')) {
+          // This looks like a broken string boundary, try to fix
+          return `"${before}\\"${after}"`;
+        }
+        return match;
+      });
+      return JSON.parse(cleaned);
+    } catch {
+      return fallback;
+    }
+  }
+}
+
 // PVR Configuration (research-backed thresholds)
 const PVR_CONFIG = {
   ENTAILMENT_THRESHOLD: 0.85,      // arxiv:2310.03025 recommends 0.85
@@ -68,7 +113,7 @@ export async function runChallenge(
   const prompt = buildChallengePrompt(query, synthesis, context);
   const response = await callLLM(prompt, {
     provider: 'gemini',
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash-lite',
     apiKey: geminiKey
   });
   
@@ -261,23 +306,32 @@ Provide a 2-3 paragraph consensus evaluation focusing on reliability and actiona
 
   const response = await callLLM(prompt, {
     provider: 'gemini',
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash-lite',
     apiKey: geminiKey
   });
   return extractContent(response.content);
 }
 
 /**
- * Run sufficiency vote - COMPARES synthesis vs critique using HCSP
- * (Hierarchical Constraint Satisfaction Protocol)
+ * Run sufficiency vote - COMPARES synthesis vs critique using 4-tier taxonomy
+ * Research: R-224005 (LLM Validator Calibration)
  * 
- * Key rule: If ANY vote identifies a CRITICAL_GAP, synthesis fails regardless of vote count
+ * Threshold rules:
+ * - 1+ CRITICAL issues → fail
+ * - 3+ MAJOR issues (with 0 CRITICAL) → fail
+ * - Otherwise (Minor/Pedantic only) → pass
  */
 export async function runSufficiencyVote(
   geminiKey: string | undefined,
   query: string,
   synthesis: string,
-  challenge: ChallengeResult | undefined
+  challenge: ChallengeResult | undefined,
+  env?: Record<string, string>,
+  atomicFacts?: string[],
+  validSources?: {
+    arxivPapers?: { id: string; title: string }[];
+    perplexitySources?: string[];
+  }
 ): Promise<SufficiencyVote | undefined> {
   if (!geminiKey) return undefined;
 
@@ -302,11 +356,15 @@ export async function runSufficiencyVote(
 
   console.error('[Vote] Comparing synthesis vs critique with HCSP...');
 
-  const prompt = buildVotePrompt(query, synthesis, challenge);
+  const prompt = buildVotePrompt(query, synthesis, challenge, atomicFacts, validSources);
   
   // Use direct LLM calls for parallel voting
   const { callLLMsParallel, getVotingConfigs } = await import('./clients/llm.js');
-  const configs = getVotingConfigs(geminiKey);
+  const configs = getVotingConfigs(
+    geminiKey,
+    env?.OPENAI_API_KEY,
+    env?.ANTHROPIC_API_KEY
+  );
   
   if (configs.length === 0) {
     console.error('[Vote] No API keys configured, assuming synthesis wins');
@@ -340,63 +398,142 @@ export async function runSufficiencyVote(
     };
   }
 
-  // HCSP Aggregation: Collect all critiques by type
-  const allCriticalGaps: string[] = [];
-  const allStylisticPreferences: string[] = [];
+  // 4-tier category aggregation (R-224005)
+  const aggregatedCounts: CritiqueCounts = { critical: 0, major: 0, minor: 0, pedantic: 0 };
+  const allCriticalIssues: string[] = [];
+  const allMajorIssues: string[] = [];
+  const allMinorIssues: string[] = [];
+  const allPedanticIssues: string[] = [];
   
   for (const vote of validVotes) {
+    // Aggregate counts
+    aggregatedCounts.critical += vote.counts.critical;
+    aggregatedCounts.major += vote.counts.major;
+    aggregatedCounts.minor += vote.counts.minor;
+    aggregatedCounts.pedantic += vote.counts.pedantic;
+    
+    // Collect issues by category
     for (const critique of vote.critiques) {
-      if (critique.type === 'CRITICAL_GAP') {
-        allCriticalGaps.push(critique.issue);
-      } else {
-        allStylisticPreferences.push(critique.issue);
+      switch (critique.category) {
+        case 'CRITICAL':
+          allCriticalIssues.push(critique.issue);
+          break;
+        case 'MAJOR':
+          allMajorIssues.push(critique.issue);
+          break;
+        case 'MINOR':
+          allMinorIssues.push(critique.issue);
+          break;
+        case 'PEDANTIC':
+          allPedanticIssues.push(critique.issue);
+          break;
       }
     }
   }
 
-  // Deduplicate
-  const uniqueCriticalGaps = [...new Set(allCriticalGaps)];
-  const uniqueStylisticPreferences = [...new Set(allStylisticPreferences)];
+  // Deduplicate issues
+  const uniqueCriticalIssues = [...new Set(allCriticalIssues)];
+  const uniqueMajorIssues = [...new Set(allMajorIssues)];
+  const uniqueMinorIssues = [...new Set(allMinorIssues)];
+  const uniquePedanticIssues = [...new Set(allPedanticIssues)];
   
-  // HCSP Rule: If ANY CRITICAL_GAP exists, synthesis fails
-  const hasCriticalGap = uniqueCriticalGaps.length > 0 || validVotes.some(v => v.hasCriticalGap);
+  // Research-backed threshold rules (R-224005):
+  // - 1+ CRITICAL → fail
+  // - 3+ MAJOR with 0 CRITICAL → fail
+  // - Otherwise → pass
+  const hasCriticalGap = aggregatedCounts.critical > 0 || uniqueCriticalIssues.length > 0;
+  const hasTooManyMajor = aggregatedCounts.major >= 3 && !hasCriticalGap;
   
-  // Count votes (for logging, but HCSP overrides)
+  // Count votes for logging
   const synthesisWins = validVotes.filter(v => v.vote === 'synthesis_wins').length;
   const critiqueWins = validVotes.filter(v => v.vote === 'critique_wins').length;
   
-  // HCSP: Critical gap overrides vote majority
-  const sufficient = hasCriticalGap ? false : (synthesisWins >= critiqueWins);
+  // Apply threshold-based decision (R-224005)
+  const sufficient = !(hasCriticalGap || hasTooManyMajor);
 
-  console.error(`[Vote] HCSP Result: ${synthesisWins} synthesis_wins, ${critiqueWins} critique_wins, hasCriticalGap: ${hasCriticalGap}`);
+  console.error(`[Vote] 4-Tier Result: ${synthesisWins} synthesis_wins, ${critiqueWins} critique_wins`);
+  console.error(`[Vote] Counts - Critical: ${aggregatedCounts.critical}, Major: ${aggregatedCounts.major}, Minor: ${aggregatedCounts.minor}, Pedantic: ${aggregatedCounts.pedantic}`);
+  
+  // Build the list of gaps that caused failure (for re-synthesis trigger)
+  // Include MAJOR issues when they caused the failure (3+ MAJOR with 0 CRITICAL)
+  let failureGaps: string[] = [];
+  
   if (hasCriticalGap) {
-    console.error(`[Vote] CRITICAL_GAPS detected (${uniqueCriticalGaps.length}): ${uniqueCriticalGaps.slice(0, 3).join('; ')}`);
+    failureGaps = uniqueCriticalIssues;
+    console.error(`[Vote] CRITICAL issues detected (${uniqueCriticalIssues.length}): ${uniqueCriticalIssues.slice(0, 3).join('; ')}`);
+  } else if (hasTooManyMajor) {
+    // Include MAJOR issues in criticalGaps so re-synthesis triggers
+    failureGaps = uniqueMajorIssues.slice(0, 5); // Limit to top 5 to focus re-synthesis
+    console.error(`[Vote] Too many MAJOR issues (${aggregatedCounts.major} >= 3): ${uniqueMajorIssues.slice(0, 3).join('; ')}`);
+  } else {
+    console.error(`[Vote] Synthesis passes - only Minor/Pedantic issues`);
   }
 
   return {
     sufficient,
     votesFor: synthesisWins,
     votesAgainst: critiqueWins,
-    criticalGaps: uniqueCriticalGaps,
-    stylisticPreferences: uniqueStylisticPreferences,
-    hasCriticalGap,
+    criticalGaps: failureGaps, // Contains issues that caused failure (CRITICAL or excess MAJOR)
+    stylisticPreferences: [...uniqueMinorIssues, ...uniquePedanticIssues], // Group Minor+Pedantic as non-blocking
+    hasCriticalGap: hasCriticalGap || hasTooManyMajor, // True if ANY blocking issues exist
     details: validVotes,
   };
 }
 
 /**
- * Build the vote prompt - compares synthesis against critique using HCSP
- * (Hierarchical Constraint Satisfaction Protocol)
- * 
- * Key insight: Distinguish CRITICAL_GAP (must fail) from STYLISTIC_PREFERENCE (can pass)
+ * Build the vote prompt - compares synthesis against critique using 4-tier taxonomy
+ * Research: R-224005 (LLM Validator Calibration)
+ * Context-aware prompting with RAG grounding (arxiv:2510.02340v2, arxiv:2403.12958v2)
  */
-function buildVotePrompt(query: string, synthesis: string, challenge: ChallengeResult): string {
+function buildVotePrompt(
+  query: string, 
+  synthesis: string, 
+  challenge: ChallengeResult,
+  atomicFacts?: string[],
+  validSources?: {
+    arxivPapers?: { id: string; title: string }[];
+    perplexitySources?: string[];
+  }
+): string {
   const critiquePoints = challenge.critiques.length > 0
     ? challenge.critiques.map((c, i) => `${i + 1}. ${c}`).join('\n')
     : challenge.rawResponse;
 
-  return `You are a RIGOROUS TECHNICAL AUDITOR using Hierarchical Constraint Satisfaction (HCSP).
+  // Build valid citation sources section
+  const citationFormatsSection = `**VALID CITATION FORMATS (NOT hallucinations):**
+- [perplexity:N] - References to web search results (e.g., [perplexity:1], [perplexity:2])
+- [arxiv:ID] - References to academic papers (e.g., [arxiv:2401.12345])
+- [context7:library] - References to library documentation
 
+These are LEGITIMATE citation formats used in this research system. Do NOT flag them as hallucinations.
+${validSources?.perplexitySources?.length ? `- ${validSources.perplexitySources.length} web sources available from Perplexity search` : ''}
+${validSources?.arxivPapers?.length ? `- ${validSources.arxivPapers.length} arXiv papers available: ${validSources.arxivPapers.map(p => `[arxiv:${p.id}]`).join(', ')}` : ''}
+
+---
+
+`;
+
+  // Research-backed: Context-aware prompting (arxiv:2510.02340v2)
+  // LLMs struggle with knowledge cutoffs; explicit grounding prevents false positives
+  const groundingSection = atomicFacts && atomicFacts.length > 0
+    ? `**GROUNDING CONTEXT (source of truth from web search/papers):**
+${atomicFacts.map(f => `- ${f}`).join('\n')}
+
+IMPORTANT: The facts above are from live web searches and academic papers (${new Date().toISOString().split('T')[0]}). 
+Your training data may be outdated. Trust the provided context over your parametric knowledge.
+
+---
+
+`
+    : '';
+
+  return `You are evaluating a RESEARCH REPORT (not production code).
+
+**CONTEXT**: This is exploratory research with illustrative code examples. 
+Research reports are NOT expected to be production-ready deployments.
+
+${citationFormatsSection}
+${groundingSection}
 ORIGINAL QUERY:
 ${query}
 
@@ -408,50 +545,73 @@ ${critiquePoints}
 
 ---
 
-**HIERARCHICAL CONSTRAINT SATISFACTION (HCSP)**
+**4-TIER TAXONOMY**
 
-You MUST categorize EACH critique point as either:
+THE KEY TEST: Does the incompleteness **block the user from understanding or acting** on the research?
 
-**CRITICAL_GAP** (auto-fail conditions):
-- Logic errors or contradictions
-- Hallucinated citations or APIs
-- Code with TODO/FIXME/placeholder
-- Missing numeric values (e.g., "fast" instead of "45ms")
-- Undefined success criteria
-- Missing implementation details that prevent execution
+**PEDANTIC** (supporting details - omission does NOT block action):
+- Code not production-ready (illustrative code demonstrates concepts)
+- Mock implementations, placeholder API keys
+- Suggestions for "more robust" code
+- Secondary reasoning paths not fully explored
 
-**STYLISTIC_PREFERENCE** (acceptable if synthesis is otherwise good):
-- Tone or formatting preferences
-- Wording choices that don't affect meaning
-- Suggestions for "more examples" when some exist
-- Minor organizational improvements
+**MINOR** (supporting details - omission does NOT block action):
+- Missing optional examples when concept is clear
+- Could use more detail, but user can still act
+- Minor inconsistencies that don't change conclusions
+- Stylistic/organization preferences
+
+**MAJOR** (essential elements - omission BLOCKS understanding or action):
+- Core query not answered or partially addressed
+- Incomplete task coverage (didn't address what was specifically asked)
+- Missing essential information that prevents user from acting
+- Contradictory recommendations without acknowledgment
+- Promised section completely absent
+
+**CRITICAL** (factually wrong - rare):
+- Factual errors contradicting cited sources
+- Hallucinated citations (invalid formats)
+- Dangerous/harmful recommendations
 
 ---
 
-**VOTING RULES:**
-- If ANY critique is a CRITICAL_GAP → vote "critique_wins"
-- If ALL critiques are STYLISTIC_PREFERENCE → vote "synthesis_wins"
-- If no valid critiques exist → vote "synthesis_wins"
+**VOTING RULES**:
+- 1+ CRITICAL → "critique_wins"
+- 3+ MAJOR (and 0 CRITICAL) → "critique_wins"
+- Otherwise → "synthesis_wins"
+
+ASK: "Can the user understand and act on this research despite this gap?"
+- YES → MINOR or PEDANTIC
+- NO → MAJOR
 
 Return JSON only:
 {
   "vote": "synthesis_wins" or "critique_wins",
-  "reasoning": "One sentence explaining your vote",
+  "reasoning": "One sentence",
+  "counts": { "critical": 0, "major": 1, "minor": 2, "pedantic": 3 },
   "critiques": [
-    {"type": "CRITICAL_GAP", "issue": "Code contains TODO on line 45"},
-    {"type": "STYLISTIC_PREFERENCE", "issue": "Tone could be more formal"}
+    {"category": "PEDANTIC", "issue": "Uses MockChatOpenAI for illustration"},
+    {"category": "MINOR", "issue": "Missing specific time estimate"},
+    {"category": "MAJOR", "issue": "Undefined success criteria for dataset quality"}
   ]
 }
 
-The critiques array MUST categorize each critique point. Be rigorous - production quality matters.`.trim();
+Categorize ALL critiques. Focus on impact, not perfection.`.trim();
 }
 
-// HCSP critique types
-export type CritiqueType = 'CRITICAL_GAP' | 'STYLISTIC_PREFERENCE';
+// 4-tier critique categories (R-224005)
+export type CritiqueCategory = 'CRITICAL' | 'MAJOR' | 'MINOR' | 'PEDANTIC';
 
 export interface CategorizedCritique {
-  type: CritiqueType;
+  category: CritiqueCategory;
   issue: string;
+}
+
+export interface CritiqueCounts {
+  critical: number;
+  major: number;
+  minor: number;
+  pedantic: number;
 }
 
 export interface ParsedVote {
@@ -459,11 +619,12 @@ export interface ParsedVote {
   vote: 'synthesis_wins' | 'critique_wins';
   reasoning: string;
   critiques: CategorizedCritique[];
+  counts: CritiqueCounts;
   hasCriticalGap: boolean;
 }
 
 /**
- * Parse vote response into structured result with HCSP categorization
+ * Parse vote response into structured result with 4-tier categorization (R-224005)
  */
 function parseVoteResponse(
   response: string, 
@@ -481,34 +642,63 @@ function parseVoteResponse(
     
     const parsed = JSON.parse(jsonMatch[0]);
     
-    // Parse critiques array with HCSP types
+    // Parse critiques array with 4-tier categories
     const critiques: CategorizedCritique[] = [];
+    const counts: CritiqueCounts = { critical: 0, major: 0, minor: 0, pedantic: 0 };
+    
     if (Array.isArray(parsed.critiques)) {
       for (const c of parsed.critiques) {
         if (c && typeof c.issue === 'string') {
-          critiques.push({
-            type: c.type === 'CRITICAL_GAP' ? 'CRITICAL_GAP' : 'STYLISTIC_PREFERENCE',
-            issue: c.issue,
-          });
+          // Normalize category names
+          let category: CritiqueCategory = 'MINOR';
+          const cat = (c.category || c.type || '').toUpperCase();
+          
+          if (cat.includes('CRITICAL')) {
+            category = 'CRITICAL';
+            counts.critical++;
+          } else if (cat.includes('MAJOR')) {
+            category = 'MAJOR';
+            counts.major++;
+          } else if (cat.includes('PEDANTIC') || cat.includes('STYLISTIC')) {
+            category = 'PEDANTIC';
+            counts.pedantic++;
+          } else {
+            category = 'MINOR';
+            counts.minor++;
+          }
+          
+          critiques.push({ category, issue: c.issue });
         }
       }
     }
     
-    // Legacy support: convert critical_gaps array to CRITICAL_GAP critiques
+    // Also check for explicit counts in response
+    if (parsed.counts && typeof parsed.counts === 'object') {
+      counts.critical = parsed.counts.critical || counts.critical;
+      counts.major = parsed.counts.major || counts.major;
+      counts.minor = parsed.counts.minor || counts.minor;
+      counts.pedantic = parsed.counts.pedantic || counts.pedantic;
+    }
+    
+    // Legacy support: convert critical_gaps array to CRITICAL critiques
     if (Array.isArray(parsed.critical_gaps)) {
       for (const gap of parsed.critical_gaps) {
         if (typeof gap === 'string' && gap.length > 0) {
-          critiques.push({ type: 'CRITICAL_GAP', issue: gap });
+          critiques.push({ category: 'CRITICAL', issue: gap });
+          counts.critical++;
         }
       }
     }
     
-    // Check if any critique is a CRITICAL_GAP
-    const hasCriticalGap = critiques.some(c => c.type === 'CRITICAL_GAP');
+    // Research-backed voting rules (R-224005):
+    // - 1+ CRITICAL → fail
+    // - 3+ MAJOR with 0 CRITICAL → fail
+    // - Otherwise → pass
+    const hasCriticalGap = counts.critical > 0;
+    const hasTooManyMajor = counts.major >= 3 && counts.critical === 0;
     
-    // HCSP rule: if ANY CRITICAL_GAP exists, vote MUST be critique_wins
-    // Override the model's vote if it incorrectly voted synthesis_wins despite critical gaps
-    const vote = hasCriticalGap ? 'critique_wins' : 
+    // Apply threshold rules
+    const vote = (hasCriticalGap || hasTooManyMajor) ? 'critique_wins' : 
       (parsed.vote === 'critique_wins' ? 'critique_wins' : 'synthesis_wins');
     
     return {
@@ -516,6 +706,7 @@ function parseVoteResponse(
       vote,
       reasoning: parsed.reasoning || 'No reasoning provided',
       critiques,
+      counts,
       hasCriticalGap,
     };
   } catch (error) {
@@ -525,6 +716,7 @@ function parseVoteResponse(
       vote: 'synthesis_wins', 
       reasoning: 'Parse failed, defaulting to synthesis_wins',
       critiques: [],
+      counts: { critical: 0, major: 0, minor: 0, pedantic: 0 },
       hasCriticalGap: false,
     };
   }
@@ -749,6 +941,7 @@ async function runCrossSectionalNLI(
     ? `\nGlobal Facts (source of truth):\n${manifest.keyFacts.map(f => `- ${f}`).join('\n')}\n`
     : '';
 
+  // Use reason codes instead of freeform text to prevent JSON parsing issues
   const nliPrompt = `You are a consistency checker. Find CONTRADICTIONS between claims.
 
 ${manifestContext}
@@ -757,50 +950,58 @@ ${claimsList}
 
 ---
 
-Find pairs that CONTRADICT each other. Contradiction means:
-- Different numeric values for the same metric
-- Opposite recommendations
-- Conflicting time/cost estimates
-- Mutually exclusive statements
+Find pairs that CONTRADICT each other using these reason codes:
+- NUMERIC_CONFLICT: Different numbers for the same metric
+- OPPOSITE_RECOMMENDATION: Contradictory advice
+- TIME_CONFLICT: Different time estimates
+- COST_CONFLICT: Different cost/budget figures
+- MUTUAL_EXCLUSION: Mutually exclusive statements
 
-Return JSON only:
-{
-  "contradictions": [
-    {
-      "claimA": 1,
-      "claimB": 3,
-      "reason": "Both discuss threshold but A says 0.85 while B says 0.75",
-      "severity": "high"
-    }
-  ],
-  "consistent_pairs": 0
-}
+Return ONLY this JSON structure (no other text):
+{"contradictions":[{"claimA":1,"claimB":3,"reasonCode":"NUMERIC_CONFLICT","severity":"high"}]}
 
-If no contradictions found, return empty array.
-severity: "high" = different numbers, "medium" = different approaches, "low" = minor wording`;
+Rules:
+- claimA and claimB are claim numbers from the list above
+- reasonCode must be one of the 5 codes listed
+- severity: "high" (numbers differ), "medium" (approaches differ), "low" (wording)
+- If no contradictions: {"contradictions":[]}
+- NO freeform text in any field - use ONLY the provided codes`;
 
   try {
     const response = await callLLMWithTimeout(nliPrompt, geminiKey, PVR_CONFIG.VERIFICATION_TIMEOUT_MS * 2);
     
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+    // Use safeParseJSON which handles all common LLM output issues
+    const parsed = safeParseJSON<{ 
+      contradictions: Array<{ 
+        claimA: number; 
+        claimB: number; 
+        reasonCode?: string;  // New: structured reason code
+        reason?: string;      // Legacy: freeform (may cause parse issues)
+        severity: string;
+      }> 
+    }>(response, { contradictions: [] });
+    
+    // Validate and transform contradictions
+    for (const c of parsed.contradictions) {
+      // Validate claim indices
+      if (typeof c.claimA !== 'number' || typeof c.claimB !== 'number') continue;
       
-      if (Array.isArray(parsed.contradictions)) {
-        for (const c of parsed.contradictions) {
-          const claimA = allClaims[c.claimA - 1];
-          const claimB = allClaims[c.claimB - 1];
-          
-          if (claimA && claimB) {
-            contradictions.push({
-              sectionA: claimA.section,
-              sectionB: claimB.section,
-              claimA: claimA.claim,
-              claimB: claimB.claim,
-              severity: c.severity || 'medium',
-            });
-          }
-        }
+      const claimA = allClaims[c.claimA - 1];
+      const claimB = allClaims[c.claimB - 1];
+      
+      if (claimA && claimB) {
+        // Validate severity is a known value
+        const validSeverity = ['high', 'medium', 'low'].includes(c.severity) 
+          ? c.severity as 'high' | 'medium' | 'low'
+          : 'medium';
+        
+        contradictions.push({
+          sectionA: claimA.section,
+          sectionB: claimB.section,
+          claimA: claimA.claim,
+          claimB: claimB.claim,
+          severity: validSeverity,
+        });
       }
     }
   } catch (error) {
@@ -898,7 +1099,7 @@ async function callLLMWithTimeout(
   try {
     const response = await callLLM(prompt, {
       provider: 'gemini',
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.5-flash-lite',
       apiKey: geminiKey,
       timeout: timeoutMs,
       maxOutputTokens: 2000,
@@ -972,7 +1173,7 @@ export async function validateCodeAgainstDocs(
   try {
     const response = await callLLM(prompt, {
       provider: 'gemini',
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.5-flash-lite',
       apiKey: geminiKey,
       timeout: 60000,
       maxOutputTokens: 16000

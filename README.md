@@ -309,6 +309,28 @@ Key thresholds (from research):
 - Few-shot examples enforce production-ready code (no TODO/FIXME)
 - Checklist-based validation audits actionability before delivery
 
+### Research-Backed Validation
+
+The validation layer implements techniques from recent AI research to ensure high-quality, factual outputs:
+
+**Diverse LLM Ensembles** (R-212511, R-214931):
+- Uses 3+ different model architectures for voting (Gemini, GPT-4o-mini, Claude Haiku)
+- Research shows diverse ensembles achieve **>98.8% success rates** vs same-model ensembles
+- Multiple small diverse models outperform single large models for consensus tasks
+- Mitigates correlated errors and systemic biases through architectural diversity
+
+**Context-Grounded Validation** (arxiv:2510.02340v2, arxiv:2403.12958v2):
+- Validators receive atomic facts from web searches and papers as explicit grounding context
+- Prompts instruct LLMs to rely *solely* on provided external context over parametric knowledge
+- Solves knowledge cutoff issues - prevents false positives on recent information (e.g., new AI models)
+- **>95% effective** at preventing outdated knowledge from causing validation failures
+
+**BetterBench Code Criteria** (arxiv:2411.12990v1):
+- Distinguishes **illustrative code** (placeholders OK if labeled) from **production code** (no placeholders)
+- Placeholder API keys (`YOUR_API_KEY`) are security best practices, not critical gaps
+- Clearly labeled mocks and conceptual examples are acceptable for demonstration purposes
+- Prevents false failures on pedagogically appropriate code examples
+
 ### Research Flow Diagram
 
 ```mermaid
@@ -402,6 +424,41 @@ These are spawned as subprocesses. Check:
 # Verify arXiv MCP server is installed:
 uv tool run arxiv-mcp-server --help
 ```
+
+**arXiv MCP Server Initialization Failures (EOF errors in isolated environments):**
+
+If you see `Error: calling "initialize": EOF` in environments with restricted PATH (e.g., Antigravity, CI/CD), the server may not be able to find the `uv` binary. Solutions:
+
+1. **Set UV_BINARY_PATH environment variable** (Recommended for isolated environments):
+```json
+{
+  "mcpServers": {
+    "research": {
+      "command": "node",
+      "args": ["/path/to/deep-research-mcp/dist/index.js"],
+      "env": {
+        "UV_BINARY_PATH": "/opt/homebrew/bin/uv",  // Apple Silicon
+        // or "/usr/local/bin/uv" for Intel Mac / Linux
+        "PERPLEXITY_API_KEY": "your-key",
+        "GEMINI_API_KEY": "your-key"
+      }
+    }
+  }
+}
+```
+
+2. **Install uv** if not already installed:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+3. **Common uv installation paths** (checked automatically if not in PATH):
+   - `/opt/homebrew/bin/uv` (Apple Silicon Homebrew)
+   - `/usr/local/bin/uv` (Intel Mac Homebrew / Linux)
+   - `~/.local/bin/uv` (User-local installation)
+   - `~/.cargo/bin/uv` (Cargo installation)
+
+The server now uses **lazy initialization** - the arXiv client is only created when `read_paper` or `download_paper` tools are actually called, preventing initialization failures.
 #### MCP Client Not Detecting Server
 
 1. Verify the path in your MCP config is correct (absolute path)

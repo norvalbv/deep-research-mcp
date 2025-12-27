@@ -9,13 +9,18 @@ import { createArxivClient, ArxivClient } from './clients/arxiv.js';
 import { arxivSearch } from './services/arxiv.js';
 import { ComplexityLevel, Section, ExecutiveSummary } from './types/index.js';
 import { createFallbackPlan, generateConsensusPlan, ResearchActionPlan } from './planning.js';
-import { executeResearchPlan, ExecutionResult } from './execution.js';
+import { executeResearchPlan } from './execution.js';
 import { synthesizeFindings, SynthesisOutput, extractGlobalManifest, formatManifestForPrompt } from './synthesis.js';
 import { runChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, runPVRVerification, getPVRConfig, ChallengeResult, SufficiencyVote } from './validation.js';
 import { GlobalManifest, PVRVerificationResult } from './types/index.js';
 import { formatMarkdown, ResearchResult, resolveCitations } from './formatting.js';
+import { buildValidationContent } from './validation-content.js';
 import { generateSectionSummaries } from './sectioning.js';
 import { compressText } from './clients/llm.js';
+import { ProgressInfo } from './jobs.js';
+
+// Progress callback type for real-time step updates
+export type OnProgressCallback = (progress: ProgressInfo) => void;
 
 export interface ResearchOptions {
   subQuestions?: string[];
@@ -48,7 +53,13 @@ export class ResearchController {
     this.isInitialized = true;
   }
 
-  async execute({ query, enrichedContext, depthLevel, options }: { query: string; enrichedContext: string; depthLevel?: ComplexityLevel; options?: ResearchOptions }): Promise<{ 
+  async execute({ query, enrichedContext, depthLevel, options, onProgress }: { 
+    query: string; 
+    enrichedContext: string; 
+    depthLevel: ComplexityLevel; 
+    options?: ResearchOptions;
+    onProgress?: OnProgressCallback;
+  }): Promise<{ 
     markdown: string; 
     result: ResearchResult;
     sections: Record<string, Section>;
@@ -56,21 +67,41 @@ export class ResearchController {
   }> {
     if (!this.isInitialized) await this.initialize();
 
+    // Progress tracking: base steps = 8, can extend to 10 if re-synthesis needed
+    let totalSteps = 8;
+    let currentStep = 1;
+    const emitProgress = (step: string, estSecondsRemaining: number, note?: string) => {
+      if (onProgress) {
+        onProgress({
+          currentStep: step,
+          stepNumber: currentStep,
+          totalSteps,
+          estimatedSecondsRemaining: estSecondsRemaining,
+          note,
+        });
+      }
+    };
+
     // Step 1: Consensus Planning
+    emitProgress('Planning', 85);
     const actionPlan = await this.getActionPlan(query, enrichedContext, depthLevel, options);
     const complexity = (depthLevel || actionPlan.complexity) as ComplexityLevel;
-    console.error(`[Research] Plan: depth=${complexity}, steps=${actionPlan.steps.join(', ')}`);
+    console.error(`[Research] Plan: ${complexity}/4, ${actionPlan.steps.join(', ')}`);
+    currentStep++;
 
     // Step 2: Dynamic Execution (gather data)
+    emitProgress('Gathering data', 70);
     const execution = await executeResearchPlan({
       query, enrichedContext, depth: complexity, actionPlan,
       context7Client: this.context7Client?.client || null,
       options,
       env: this.env,
     });
+    currentStep++;
 
-    // Step 2.5: Extract Global Constraint Manifest from sources
+    // Step 3: Extract Global Constraint Manifest from sources
     // This ensures all synthesis calls share consistent facts (arxiv:2310.03025)
+    emitProgress('Extracting manifest', 55);
     console.error('[Research] Extracting global constraint manifest from sources...');
     const manifest = await extractGlobalManifest(execution, this.env.GEMINI_API_KEY);
     
@@ -79,46 +110,24 @@ export class ResearchController {
     const enrichedWithManifest = manifestContext 
       ? `${enrichedContext || ''}\n\n${manifestContext}`
       : enrichedContext;
+    currentStep++;
 
-    // Step 3: Synthesize findings into unified answer
-    // Fail fast if synthesis fails - no silent fallbacks
-    let synthesisOutput: SynthesisOutput;
-    try {
-      synthesisOutput = await synthesizeFindings(
-        this.env.GEMINI_API_KEY,
-        query,
-        enrichedWithManifest,
-        execution,
-        { ...options, depth: complexity }
-      );
-    } catch (synthesisError: any) {
-      console.error('[Research] Synthesis failed:', synthesisError.message);
-      // Return a clear failure result - no fallback
-      const failureMessage = `Synthesis failed: ${synthesisError.message || 'API timeout or error'}. Please try again.`;
-      return {
-        markdown: `# Research Failed\n\n${failureMessage}`,
-        result: {
-          query,
-          complexity,
-          complexityReasoning: actionPlan.reasoning,
-          execution,
-          synthesis: { overview: failureMessage },
-        },
-        sections: {
-          overview: { title: 'Error', content: failureMessage, summary: failureMessage },
-        },
-        executiveSummary: {
-          queryAnswered: false,
-          confidence: 'low',
-          keyRecommendation: failureMessage,
-          availableSections: ['overview'],
-        },
-      };
-    }
+    // Step 4: Synthesize findings into unified answer
+    // Automatically uses phased synthesis if sub-questions exist (token-efficient)
+    emitProgress('Synthesizing findings', 45);
+    let synthesisOutput = await synthesizeFindings(
+      this.env.GEMINI_API_KEY,
+      query,
+      enrichedWithManifest,
+      execution,
+      { ...options, depth: complexity }  // Pass depth to gate code examples
+    );
+    currentStep++;
 
-    // Step 3.5: PVR Verification - Check consistency across sections
+    // Step 5: PVR Verification - Check consistency across sections
     let pvrResult: PVRVerificationResult | undefined;
     if (options?.subQuestions?.length) {
+      emitProgress('PVR Verification', 35);
       console.error('[Research] Running PVR verification...');
       pvrResult = await runPVRVerification(synthesisOutput, manifest, this.env.GEMINI_API_KEY);
       
@@ -142,7 +151,7 @@ export class ResearchController {
       }
     }
 
-    // Step 3.6: Code validation pass (if Context7 docs available)
+    // Code validation pass (if Context7 docs available)
     if (execution.docCache && Object.keys(execution.docCache.base).length > 0) {
       synthesisOutput = await validateCodeAgainstDocs(
         this.env.GEMINI_API_KEY,
@@ -150,8 +159,10 @@ export class ResearchController {
         execution.docCache
       );
     }
+    currentStep++;
 
-    // Step 4: Run challenge + consensus in PARALLEL to save time
+    // Step 6: Run challenge + consensus in PARALLEL to save time
+    emitProgress('Challenge + Consensus', 25);
     console.error('[Research] Running challenge + consensus in parallel...');
     const challengeContext = {
       enrichedContext,
@@ -184,37 +195,62 @@ export class ResearchController {
         ? runConsensusValidation(this.env.GEMINI_API_KEY, query, execution) 
         : Promise.resolve(undefined),
     ]);
+    currentStep++;
 
-    // Step 5: Sufficiency Vote - synthesis vs critique
+    // Step 7: Sufficiency Vote - synthesis vs critique
     // Early exit: if no significant gaps found, skip voting entirely
     // Only run at depth >= 3
     let sufficiency: SufficiencyVote | undefined;
     let improved = false;
     
     if (shouldRunVoting && challenge?.hasSignificantGaps) {
+      emitProgress('Sufficiency Vote', 15);
       console.error('[Research] Running sufficiency vote (synthesis vs critique)...');
-      sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, synthesisText, challenge);
+      sufficiency = await runSufficiencyVote(
+        this.env.GEMINI_API_KEY, 
+        query, 
+        synthesisText, 
+        challenge, 
+        this.env,
+        manifest.keyFacts,
+        challengeContext.validSources
+      );
 
-      // Step 6: Re-synthesis if critique wins (max 1 iteration)
+      // Re-synthesis if critique wins (max 1 iteration)
       if (sufficiency && !sufficiency.sufficient && sufficiency.criticalGaps.length > 0) {
+        // Extend total steps for re-synthesis
+        totalSteps = 10;
+        emitProgress('Re-synthesis', 40, 'Poor validation results, re-synthesizing with gap awareness so time has extended.');
         console.error('[Research] Critique wins - re-synthesizing with gaps...');
         improved = true;
         
         // Gather additional data for critical gaps
         await this.gatherDataForGaps(execution, sufficiency.criticalGaps, query);
+        currentStep++;
         
         // Re-synthesize with gap awareness
+        emitProgress('Re-synthesis', 30, 'Addressing critical gaps, re-synthesizing with gap awareness so time has extended.');
         synthesisOutput = await this.resynthesizeWithGaps(
           query, enrichedContext, execution, options, sufficiency.criticalGaps, complexity
         );
         
         const newSynthesisText = this.synthesisOutputToText(synthesisOutput);
+        currentStep++;
         
         // Final challenge (no more iterations)
+        emitProgress('Final validation', 15);
         const finalChallenge = await runChallenge(this.env.GEMINI_API_KEY, query, newSynthesisText, challengeContext);
         
         if (finalChallenge?.hasSignificantGaps) {
-          sufficiency = await runSufficiencyVote(this.env.GEMINI_API_KEY, query, newSynthesisText, finalChallenge);
+          sufficiency = await runSufficiencyVote(
+            this.env.GEMINI_API_KEY, 
+            query, 
+            newSynthesisText, 
+            finalChallenge, 
+            this.env,
+            manifest.keyFacts,
+            challengeContext.validSources
+          );
         } else {
           // No gaps after re-synthesis, synthesis wins
           sufficiency = {
@@ -228,8 +264,7 @@ export class ResearchController {
           };
         }
       }
-    } else if (shouldRunChallenge) {
-      // Challenge ran but found no significant gaps
+    } else {
       console.error('[Research] No significant gaps - skipping vote');
       sufficiency = {
         sufficient: true,
@@ -240,39 +275,17 @@ export class ResearchController {
         stylisticPreferences: [],
         hasCriticalGap: false,
       };
-    } else {
-      // Challenge didn't run (depth < 2), default to sufficient
-      sufficiency = {
-        sufficient: true,
-        votesFor: 1,
-        votesAgainst: 0,
-        criticalGaps: [],
-        details: [{ model: 'default', vote: 'synthesis_wins', reasoning: `Validation skipped at depth ${complexity}`, critiques: [] }],
-        stylisticPreferences: [],
-        hasCriticalGap: false,
-      };
     }
+    currentStep++;
 
-    // Check if synthesis actually failed - override validation to reflect failure
-    const synthesisFailedMessage = 'No synthesis content was generated';
-    if (synthesisOutput.overview.includes(synthesisFailedMessage) || synthesisOutput.overview.includes('Synthesis failed:')) {
-      sufficiency = {
-        sufficient: false,
-        votesFor: 0,
-        votesAgainst: 1,
-        criticalGaps: ['Synthesis failed - LLM returned empty or error content'],
-        details: [{ model: 'default', vote: 'critique_wins', reasoning: 'Synthesis failed to generate content', critiques: [] }],
-        stylisticPreferences: [],
-        hasCriticalGap: true,
-      };
-    }
-
-    // Build sections from structured synthesis output + validation data
+    // Step 8: Build sections from structured synthesis output + validation data
+    emitProgress('Building sections', 5);
     console.error('[Research] Building sections from structured output...');
     const sections = this.buildSectionsFromResult(
       synthesisOutput, 
       { challenge, consensus, sufficiency, improved },
-      execution  // Pass execution for arxiv papers
+      execution,  // Pass execution for arxiv papers
+      complexity  // Pass complexity to gate validation section
     );
     
     // Generate summaries for each section
@@ -288,12 +301,12 @@ export class ResearchController {
     console.error('[Research] Rendering markdown from structured sections...');
     const markdown = formatMarkdown(result);
     
-    // Build executive summary (use resolved section content, not raw synthesis output)
+    // Build executive summary
     const executiveSummary: ExecutiveSummary = {
       queryAnswered: sufficiency?.sufficient ?? true,
       confidence: this.determineConfidence(complexity, sufficiency),
-      keyRecommendation: await this.extractKeyRecommendation(sections.overview.content, this.env.GEMINI_API_KEY, complexity),
-      budgetFeasibility: this.extractBudgetFeasibility(enrichedContext, sections.overview.content),
+      keyRecommendation: await this.extractKeyRecommendation(synthesisOutput.overview, this.env.GEMINI_API_KEY),
+      budgetFeasibility: this.extractBudgetFeasibility(enrichedContext, synthesisOutput.overview),
       availableSections: Object.keys(sections),
     };
 
@@ -332,7 +345,7 @@ export class ResearchController {
 
   /**
    * Build Section objects from structured synthesis output + validation data
-   * Now resolves [perplexity:N] citations to actual URLs
+   * Resolves [perplexity:N] citations to actual URLs
    */
   private buildSectionsFromResult(
     output: SynthesisOutput,
@@ -342,14 +355,18 @@ export class ResearchController {
       sufficiency?: SufficiencyVote;
       improved?: boolean;
     },
-    execution: ExecutionResult
+    execution: { 
+      arxivPapers?: { papers: Array<{ id: string; title: string; summary: string; url: string }> };
+      perplexityResult?: { sources?: string[] };
+    },
+    complexity?: ComplexityLevel
   ): Record<string, Section> {
     const sections: Record<string, Section> = {};
     
     // Helper to resolve citations in content
-    const resolve = (text: string) => resolveCitations(text, execution);
+    const resolve = (text: string) => resolveCitations(text, execution as any);
     
-    // Overview section - resolve citations to actual URLs
+    // Overview section - resolve citations
     sections.overview = {
       title: 'Overview',
       content: resolve(output.overview),
@@ -389,59 +406,21 @@ export class ResearchController {
       };
     }
     
-    // Validation section - combines challenge + sufficiency
-    if (validation.challenge || validation.sufficiency) {
-      const validationParts: string[] = [];
-      
-      // Critical Challenge
-      if (validation.challenge) {
-        validationParts.push('### Critical Challenge\n');
-        if (validation.challenge.hasSignificantGaps && validation.challenge.critiques.length > 0) {
-          validation.challenge.critiques.forEach((critique, i) => {
-            validationParts.push(`${i + 1}. ${critique}`);
-          });
-        } else {
-          validationParts.push('No significant gaps found in the synthesis.');
-        }
-        validationParts.push('');
-      }
-      
-      // Quality Vote
-      if (validation.sufficiency) {
-        validationParts.push('### Quality Vote\n');
-        validationParts.push(`**Result**: ${validation.sufficiency.votesFor} synthesis_wins, ${validation.sufficiency.votesAgainst} critique_wins`);
-        
-        if (validation.improved) {
-          validationParts.push('**Status**: ⚠️ Synthesis improved after critique identified gaps\n');
-        } else if (validation.sufficiency.sufficient) {
-          validationParts.push('**Status**: ✅ Synthesis validated (addresses the query adequately)\n');
-        } else {
-          validationParts.push('**Status**: ⚠️ Critique identified gaps (see below)\n');
-        }
-        
-        if (validation.sufficiency.criticalGaps && validation.sufficiency.criticalGaps.length > 0) {
-          validationParts.push('**Critical Gaps Identified**:');
-          validation.sufficiency.criticalGaps.forEach((gap) => {
-            validationParts.push(`- ${gap}`);
-          });
-          validationParts.push('');
-        }
-        
-        validationParts.push('**Model Reasoning**:');
-        validation.sufficiency.details.forEach((vote) => {
-          const status = vote.vote === 'synthesis_wins' ? '✅' : '❌';
-          validationParts.push(`- ${status} **${vote.model}**: ${vote.reasoning}`);
-        });
-      }
-      
+    // Validation section - uses shared utility (consistent with formatting.ts)
+    const validationContent = buildValidationContent(
+      { challenge: validation.challenge, sufficiency: validation.sufficiency, improved: validation.improved },
+      complexity ?? 3,
+      { includeConsensus: false }  // Consensus handled separately below
+    );
+    if (validationContent) {
       sections.validation = {
         title: 'Validation',
-        content: validationParts.join('\n'),
+        content: validationContent,
         summary: '',
       };
     }
     
-    // Consensus section (if present)
+    // Consensus section (if present, as separate section for read_report access)
     if (validation.consensus) {
       sections.consensus = {
         title: 'Multi-Model Consensus',
@@ -460,30 +439,16 @@ export class ResearchController {
     complexity: ComplexityLevel,
     sufficiency?: SufficiencyVote
   ): 'high' | 'medium' | 'low' {
-    // If validation found issues, confidence is low
     if (sufficiency && !sufficiency.sufficient) return 'low';
-    
-    // At depth 1-2, we're not running validation, so default to high
-    // (simple queries with direct answers from Perplexity)
-    if (complexity <= 2) return 'high';
-    
-    // At depth 3+, use validation results
     if (complexity >= 4 && (sufficiency?.votesFor ?? 0) >= 2) return 'high';
     if (complexity >= 3) return 'medium';
-    
     return 'medium';
   }
 
   /**
    * Extract key recommendation using LLM-based summarization (~50 words / ~200 chars)
-   * For depth 1-2, keep it extremely concise (1-2 sentences max)
    */
-  private async extractKeyRecommendation(synthesis: string, apiKey?: string, depth?: number): Promise<string> {
-    // Handle empty/error synthesis
-    if (!synthesis || synthesis.trim() === '') {
-      return 'No recommendation available.';
-    }
-    
+  private async extractKeyRecommendation(synthesis: string, apiKey?: string): Promise<string> {
     if (!apiKey || synthesis.length < 200) {
       // Fallback: return as-is if short or no API key
       return synthesis.length > 200 
@@ -491,32 +456,7 @@ export class ResearchController {
         : synthesis;
     }
     
-    // For depth 1-2 (simple queries), extract just the direct answer
-    if (depth && depth <= 2) {
-      // Extract first sentence, but avoid matching periods inside markdown links
-      // Strategy: temporarily remove markdown links, find sentence, then restore them
-      const linkPlaceholders: string[] = [];
-      const textWithoutLinks = synthesis.replace(/\[\[.*?\]\]\(.*?\)/g, (match) => {
-        const placeholder = `__LINK_${linkPlaceholders.length}__`;
-        linkPlaceholders.push(match);
-        return placeholder;
-      });
-      
-      const firstSentence = textWithoutLinks.match(/^[^.!?]+[.!?]/);
-      
-      if (firstSentence) {
-        // Restore markdown links in the matched sentence
-        let result = firstSentence[0];
-        linkPlaceholders.forEach((link, i) => {
-          result = result.replace(`__LINK_${i}__`, link);
-        });
-        return result.trim();
-      }
-      // Fallback: first 100 chars
-      return synthesis.slice(0, 100).trim() + (synthesis.length > 100 ? '...' : '');
-    }
-    
-    // LLM-based summarization for depth 3+ (~50 words = ~200 chars)
+    // LLM-based summarization (~50 words = ~200 chars)
     return await compressText(synthesis, 50, apiKey);
   }
 
@@ -618,7 +558,7 @@ export class ResearchController {
         const { callLLM } = await import('./clients/llm.js');
         const response = await callLLM(rerollPrompt, {
           provider: 'gemini',
-          model: 'gemini-3-flash-preview',
+          model: 'gemini-2.5-flash-lite',
           apiKey: this.env.GEMINI_API_KEY,
           timeout: 30000,
           maxOutputTokens: 4000,
@@ -705,40 +645,26 @@ Write the answer directly, no preamble.`;
     }
   }
 
-  async plan(
-    query: string, 
-    enrichedContext?: string, 
-    depthLevel?: ComplexityLevel, 
-    options?: ResearchOptions
-  ): Promise<ResearchActionPlan> {
-    if (!this.isInitialized) await this.initialize();
-    return this.getActionPlan(query, enrichedContext, depthLevel, options);
+  /**
+   * Public method for external callers (e.g., job-orchestrator) to get action plan
+   */
+  async plan(query: string, ctx?: string, depth?: ComplexityLevel, opts?: ResearchOptions): Promise<ResearchActionPlan> {
+    return this.getActionPlan(query, ctx, depth, opts);
   }
 
   private async getActionPlan(query: string, ctx?: string, depth?: ComplexityLevel, opts?: ResearchOptions): Promise<ResearchActionPlan> {
-    // If depth is explicitly provided, skip consensus planning - just use deterministic plan
-    if (depth !== undefined) {
-      console.error(`[Planning] Using explicit depth ${depth} - skipping consensus planning`);
-      return createFallbackPlan({
-        techStack: opts?.techStack,
-        subQuestions: opts?.subQuestions,
-        maxDepth: depth,
-      });
-    }
-    
-    // Auto-detect depth via consensus planning (5 LLM proposals + judge)
     if (this.env.GEMINI_API_KEY) {
-      console.error('[Planning] Auto-detecting depth via consensus planning...');
       return generateConsensusPlan(this.env.GEMINI_API_KEY, query, ctx, {
         constraints: opts?.constraints, papersRead: opts?.papersRead,
         techStack: opts?.techStack, subQuestions: opts?.subQuestions,
+        maxDepth: depth,  // Pass user's requested depth as cap
       }, this.env);
     }
-    
-    // Fallback when no API key
+    // Fallback
     return createFallbackPlan({
       techStack: opts?.techStack,
       subQuestions: opts?.subQuestions,
+      maxDepth: depth,
     });
   }
 

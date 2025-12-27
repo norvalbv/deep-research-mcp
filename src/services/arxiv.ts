@@ -51,7 +51,7 @@ async function extractArxivKeywords(query: string, apiKey: string): Promise<stri
       `Extract 3-5 core academic keywords from this query for arXiv search. Return only comma-separated keywords, no explanation.\n\nQuery: ${query}`,
       { 
         provider: 'gemini', 
-        model: 'gemini-3-flash-preview', 
+        model: 'gemini-2.5-flash-lite', 
         apiKey, 
         timeout: 10000 
       }
@@ -102,7 +102,7 @@ Return only numbers of YES papers, comma-separated (e.g., "1, 3, 5"):`;
 
     const response = await callLLM(prompt, {
       provider: 'gemini',
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.5-flash-lite',
       apiKey,
       timeout: 30000
     });

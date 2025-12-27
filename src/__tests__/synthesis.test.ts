@@ -284,3 +284,107 @@ export function detectLogicInconsistencies(_text: string): {
   console.warn('detectLogicInconsistencies: Use LLM-as-a-Judge for semantic evaluation');
   return { hasInconsistency: false, andPatterns: [], orPatterns: [], conflicts: [] };
 }
+
+// ============================================================================
+// Citation Resolution Tests
+// ============================================================================
+
+import { resolveCitations } from '../formatting.js';
+
+describe('Citation Resolution', () => {
+  const mockExecution = {
+    perplexityResult: {
+      content: 'test content',
+      sources: [
+        'https://example.com/article1',
+        'https://docs.python.org/guide',
+        'https://arxiv.org/abs/2401.12345',
+        'https://www.github.com/repo',
+        'https://medium.com/blog-post',
+        'https://research.google/paper',
+      ],
+    },
+  };
+
+  // Simple numeric citations [N]
+  it('resolves simple numeric citation [1]', () => {
+    const text = 'This is a fact [1].';
+    const result = resolveCitations(text, mockExecution as any);
+    expect(result).toContain('[example.com]');
+    expect(result).toContain('(https://example.com/article1)');
+    expect(result).not.toContain('[1]');
+  });
+
+  it('resolves consecutive numeric citations [1][2][4]', () => {
+    const text = 'Multiple sources [1][2][4].';
+    const result = resolveCitations(text, mockExecution as any);
+    expect(result).toContain('[example.com]');
+    expect(result).toContain('[docs.python.org]');
+    expect(result).toContain('[github.com]');
+    expect(result).not.toContain('[1]');
+    expect(result).not.toContain('[2]');
+    expect(result).not.toContain('[4]');
+  });
+
+  // Perplexity format citations
+  it('resolves single perplexity citation [perplexity:1]', () => {
+    const text = 'This is a fact [perplexity:1].';
+    const result = resolveCitations(text, mockExecution as any);
+    expect(result).toContain('[example.com]');
+    expect(result).toContain('(https://example.com/article1)');
+    expect(result).not.toContain('[perplexity:1]');
+  });
+
+  it('resolves comma-separated citations [perplexity:1, perplexity:2]', () => {
+    const text = 'Multiple sources [perplexity:1, perplexity:2].';
+    const result = resolveCitations(text, mockExecution as any);
+    expect(result).toContain('[example.com]');
+    expect(result).toContain('[docs.python.org]');
+    expect(result).not.toContain('[perplexity:1');
+    expect(result).not.toContain('perplexity:2]');
+  });
+
+  it('resolves multiple comma-separated citations [perplexity:1, perplexity:2, perplexity:6]', () => {
+    const text = 'Many sources [perplexity:1, perplexity:2, perplexity:6].';
+    const result = resolveCitations(text, mockExecution as any);
+    expect(result).toContain('[example.com]');
+    expect(result).toContain('[docs.python.org]');
+    expect(result).toContain('[research.google]');
+    expect(result).not.toContain('[perplexity:');
+  });
+
+  it('handles case-insensitive citations [Perplexity:1]', () => {
+    const text = 'Capitalized [Perplexity:1].';
+    const result = resolveCitations(text, mockExecution as any);
+    expect(result).toContain('[example.com]');
+    expect(result).not.toContain('[Perplexity:1]');
+  });
+
+  // Edge cases
+  it('handles missing sources gracefully for numeric', () => {
+    const text = 'Citation [99].';
+    const result = resolveCitations(text, mockExecution as any);
+    expect(result).toContain('[99]'); // Kept as-is
+  });
+
+  it('handles missing sources gracefully for perplexity', () => {
+    const text = 'Citation [perplexity:99].';
+    const result = resolveCitations(text, mockExecution as any);
+    expect(result).toContain('[perplexity:99]'); // Kept as-is
+  });
+
+  it('handles empty sources array', () => {
+    const emptyExecution = { perplexityResult: { content: '', sources: [] } };
+    const text = 'Citation [1] and [perplexity:1].';
+    const result = resolveCitations(text, emptyExecution as any);
+    expect(result).toContain('[1]'); // Kept as-is
+    expect(result).toContain('[perplexity:1]'); // Kept as-is
+  });
+
+  it('handles undefined perplexityResult', () => {
+    const noPerplexity = {};
+    const text = 'Citation [1].';
+    const result = resolveCitations(text, noPerplexity as any);
+    expect(result).toContain('[1]'); // Kept as-is
+  });
+});

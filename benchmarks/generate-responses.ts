@@ -6,8 +6,7 @@
  * 
  * Usage:
  *   npm run benchmark:generate              # Generate all missing responses
- *   npm run benchmark:generate --new-set    # Clear all responses and regenerate from scratch
- *   npm run benchmark:generate --force      # Regenerate all responses (keeps existing)
+ *   npm run benchmark:generate:sample       # Generate 5 samples (quick test)
  */
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -73,6 +72,7 @@ async function generateMCPResponse(query: string, geminiApiKey: string): Promise
   const result = await controller.execute({
     query,
     enrichedContext: '',
+    depthLevel: 3, // Medium depth for benchmark consistency
     options: {
       outputFormat: 'detailed',
       includeCodeExamples: true,
@@ -119,7 +119,6 @@ async function main() {
   
   const sampleLimit = parseInt(process.env.SAMPLE_LIMIT || '0', 10);
   const forceRegenerate = process.argv.includes('--force');
-  const newSet = process.argv.includes('--new-set');
   
   console.log('='.repeat(60));
   console.log('Response Generation for Comparative Benchmarking');
@@ -128,22 +127,10 @@ async function main() {
   console.log('');
   
   const dataset = loadDataset();
-  
-  // Clear all responses if --new-set flag is provided
-  if (newSet) {
-    console.log('Clearing all existing responses (--new-set)...');
-    for (const sample of dataset.samples) {
-      delete sample.responses;
-    }
-    saveDataset(dataset);
-    console.log('All responses cleared.');
-    console.log('');
-  }
-  
   let samplesToProcess = dataset.samples;
   
-  // Filter to samples needing responses (unless --force or --new-set)
-  if (!forceRegenerate && !newSet) {
+  // Filter to samples needing responses (unless --force)
+  if (!forceRegenerate) {
     samplesToProcess = samplesToProcess.filter(s => !hasValidResponses(s));
   }
   
@@ -154,12 +141,11 @@ async function main() {
   
   console.log(`Total samples in dataset: ${dataset.samples.length}`);
   console.log(`Samples to process: ${samplesToProcess.length}`);
-  console.log(`New set mode: ${newSet}`);
   console.log(`Force regenerate: ${forceRegenerate}`);
   console.log('');
   
   if (samplesToProcess.length === 0) {
-    console.log('All samples have valid responses. Use --force or --new-set to regenerate.');
+    console.log('All samples have valid responses. Use --force to regenerate.');
     return;
   }
   

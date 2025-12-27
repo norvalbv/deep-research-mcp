@@ -1,4 +1,4 @@
-export type LLMProvider = 'gemini' | 'openai';
+export type LLMProvider = 'gemini' | 'openai' | 'anthropic';
 
 export interface LLMConfig {
   provider: LLMProvider;
@@ -113,6 +113,48 @@ async function callOpenAI(
 }
 
 /**
+ * Call Anthropic API directly using native fetch
+ */
+async function callAnthropic(
+  prompt: string,
+  model: string,
+  apiKey: string,
+  timeout: number = 30000,
+  maxOutputTokens: number = 4096,
+  temperature: number = 0.7
+): Promise<string> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: maxOutputTokens,
+        temperature,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Anthropic API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.content?.[0]?.text || '';
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Call a single LLM
  * @param options.critical - If true, throws LLMError on failure instead of returning empty content
  * @param options.minContentLength - Minimum content length to consider response valid (default: 10)
@@ -132,8 +174,12 @@ export async function callLLM(
     
     if (config.provider === 'gemini') {
       content = await callGemini(prompt, config.model, config.apiKey, timeout, maxOutputTokens, temperature);
-    } else {
+    } else if (config.provider === 'openai') {
       content = await callOpenAI(prompt, config.model, config.apiKey, timeout, maxOutputTokens);
+    } else if (config.provider === 'anthropic') {
+      content = await callAnthropic(prompt, config.model, config.apiKey, timeout, maxOutputTokens, temperature);
+    } else {
+      throw new Error(`Unknown provider: ${config.provider}`);
     }
     
     // Fail-fast: throw if content is too short and this is a critical call
@@ -204,26 +250,46 @@ export async function callLLMsParallel(
 }
 
 /**
- * Get default configs for parallel voting (5 calls)
- * Uses only Gemini for now since it's more reliable for structured outputs
+ * Get default configs for parallel voting (3-5 calls with diverse models)
+ * Research: Diverse LLM ensembles outperform same-model ensembles (R-212511, R-214931)
+ * - Multiple small diverse models > single large model (accuracy-to-cost ratio)
+ * - Ensemble power mitigates individual biases and hallucinations
+ * - >98.8% success rate vs same-model ensembles
  */
-export function getVotingConfigs(geminiKey?: string): LLMConfig[] {
-  const key = geminiKey || '';
+export function getVotingConfigs(
+  geminiKey?: string,
+  openaiKey?: string,
+  anthropicKey?: string
+): LLMConfig[] {
+  const configs: LLMConfig[] = [];
   
-  if (!key) {
-    console.error('[LLM] ERROR: GEMINI_API_KEY not provided');
-    return [];
+  // Research: Diverse small models > same model instances (R-214931)
+  // Research: Diverse models > single large model (R-212511)
+  if (geminiKey) {
+    configs.push({ provider: 'gemini', model: 'gemini-2.5-flash-lite', apiKey: geminiKey });
+  }
+  if (openaiKey) {
+    configs.push({ provider: 'openai', model: 'gpt-5-nano', apiKey: openaiKey });
+  }
+  if (anthropicKey) {
+    configs.push({ provider: 'anthropic', model: 'claude-haiku-4-5', apiKey: anthropicKey });
   }
   
-  // 5x Gemini Flash for consistent, fast voting
-  // Using same model multiple times still provides diversity through temperature
-  return [
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
-    { provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: key },
-  ];
+  // Add second Gemini variant if only one provider available
+  if (configs.length < 3 && geminiKey) {
+    configs.push({ provider: 'gemini', model: 'gemini-3-flash-preview', apiKey: geminiKey });
+  }
+  
+  // Fill remaining slots with Gemini if we have fewer than 3 models
+  while (configs.length < 3 && geminiKey) {
+    configs.push({ provider: 'gemini', model: 'gemini-2.5-flash-lite', apiKey: geminiKey });
+  }
+  
+  if (configs.length === 0) {
+    console.error('[LLM] ERROR: No API keys provided for voting');
+  }
+  
+  return configs;
 }
 
 export const compressText = async (text: string, maxWords: number, geminiKey?: string): Promise<string> => {
@@ -273,7 +339,7 @@ Text:
 ${text}`, 
     { 
       provider: 'gemini', 
-      model: 'gemini-3-flash-preview', 
+      model: 'gemini-2.5-flash-lite', 
       apiKey: key, 
       maxOutputTokens: 8000,  // Higher to account for internal reasoning tokens
       timeout: 60000  // 60s timeout for compression (thinking tokens can take time)

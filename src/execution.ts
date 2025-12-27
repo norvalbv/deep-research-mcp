@@ -198,7 +198,7 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
       buildDeepAnalysisPrompt(query, enrichedContext, result.perplexityResult?.content),
       {
         provider: 'gemini',
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-2.5-flash-lite',
         apiKey: env.GEMINI_API_KEY
       }
     );
@@ -221,7 +221,7 @@ async function summarizePapers(papers: ArxivPaper[], geminiKey: string): Promise
         `Summarize in <300 chars: ${p.title}\n${p.summary}`,
         {
           provider: 'gemini',
-          model: 'gemini-3-flash-preview',
+          model: 'gemini-2.5-flash-lite',
           apiKey: geminiKey
         }
       );

@@ -77,6 +77,7 @@ describe('Depth Feature Matrix', () => {
     2: { perplexity: true, deep: true, context7: false, arxiv: false, consensus: false, challenge: true, voting: false, code: false },
     3: { perplexity: true, deep: true, context7: true, arxiv: false, consensus: false, challenge: true, voting: true, code: true },
     4: { perplexity: true, deep: true, context7: true, arxiv: true, consensus: true, challenge: true, voting: true, code: true },
+    5: { perplexity: true, deep: true, context7: true, arxiv: true, consensus: true, challenge: true, voting: true, code: true },
   };
 
   it('depth 1 should have minimal features', () => {
@@ -103,8 +104,14 @@ describe('Depth Feature Matrix', () => {
     expect(features.arxiv).toBe(false);
   });
 
-  it('depth 4 has all features', () => {
+  it('depth 4 adds arxiv and consensus', () => {
     const features = DEPTH_FEATURES[4];
+    expect(features.arxiv).toBe(true);
+    expect(features.consensus).toBe(true);
+  });
+
+  it('depth 5 has all features', () => {
+    const features = DEPTH_FEATURES[5];
     expect(Object.values(features).every(v => v === true)).toBe(true);
   });
 });
@@ -179,7 +186,7 @@ describe('Step Filtering by Depth', () => {
   });
 
   it('perplexity always included regardless of depth', () => {
-    for (const depth of [1, 2, 3, 4]) {
+    for (const depth of [1, 2, 3, 4, 5]) {
       const steps = ['perplexity_search'];
       const filtered = filterStepsByDepth(steps, depth);
       expect(filtered).toContain('perplexity_search');
@@ -261,6 +268,7 @@ describe('Synthesis Code Example Gating', () => {
 
   it('depth 4+: code examples if requested', () => {
     expect(shouldIncludeCodeExamples(true, 4)).toBe(true);
+    expect(shouldIncludeCodeExamples(true, 5)).toBe(true);
   });
 });
 

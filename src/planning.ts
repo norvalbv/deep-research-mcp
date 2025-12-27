@@ -34,7 +34,11 @@ export async function generateConsensusPlan(
   env?: Record<string, string>
 ): Promise<ResearchActionPlan> {
   const planningPrompt = buildPlanningPrompt(query, enrichedContext, options);
-  const configs = getVotingConfigs(geminiKey);
+  const configs = getVotingConfigs(
+    geminiKey,
+    env?.OPENAI_API_KEY,
+    env?.ANTHROPIC_API_KEY
+  );
 
   if (configs.length === 0) {
     console.error('[Planning] No API keys configured, using fallback plan');
@@ -120,84 +124,74 @@ function buildPlanningPrompt(
   }
 ): string {
   const maxDepthInstruction = options?.maxDepth 
-    ? `\n**IMPORTANT: User requested max depth level: ${options.maxDepth}. Do NOT exceed this complexity level.**\n`
+    ? `\n**HARD LIMIT: Maximum depth is ${options.maxDepth}. You MUST return complexity <= ${options.maxDepth}.**\n`
     : '';
     
   return `
-You are a research planning expert. Create a detailed action plan to answer this research query.
+You are a research query complexity classifier. Your job is to analyze the query and determine the minimum complexity level required to answer it accurately.
 
-Query: ${query}
+## QUERY TO CLASSIFY
+"${query}"
 ${maxDepthInstruction}
-${enrichedContext ? `Context:\n${enrichedContext}\n` : ''}
+${enrichedContext ? `\n## CONTEXT PROVIDED\n${enrichedContext}\n` : ''}
+${options?.constraints ? `## CONSTRAINTS\n- ${options.constraints.join('\n- ')}\n` : ''}
+${options?.papersRead ? `## Papers Already Read (avoid):\n- ${options.papersRead.join('\n- ')}\n` : ''}
+${options?.techStack ? `## TECH STACK\n${options.techStack.join(', ')}\n` : ''}
+${options?.subQuestions ? `## SUB-QUESTIONS\n${options.subQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n` : ''}
 
-${options?.constraints ? `Constraints:\n- ${options.constraints.join('\n- ')}\n` : ''}
-${options?.papersRead ? `Papers Already Read (avoid):\n- ${options.papersRead.join('\n- ')}\n` : ''}
-${options?.techStack ? `Tech Stack: ${options.techStack.join(', ')}\n` : ''}
-${options?.subQuestions ? `Sub-questions:\n${options.subQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n` : ''}
+## COMPLEXITY CLASSIFICATION RUBRIC
 
-Available tools:
-- perplexity: Web search for recent information and sources
-- deep_analysis: AI reasoning and analysis
-- context7: Library/framework documentation with code examples
-- arxiv: Academic papers (with summaries)
-- consensus: Multi-model validation (for critical findings)
+### Depth 1 - Simple Factual Lookup
+**Signals**: Single fact, one expected answer, no analysis needed
+**Tools**: perplexity only
+**Examples**:
+- "When was the Transformer paper published?" -> Depth 1 (single date lookup)
+- "What is the capital of France?" -> Depth 1 (single fact)
+- "How many parameters does GPT-3 have?" -> Depth 1 (single number)
+- "Who created PyTorch?" -> Depth 1 (single entity)
 
-Return a JSON action plan with this structure:
+### Depth 2 - Factual + Basic Reasoning
+**Signals**: Requires explanation or "why/how" reasoning on a single topic
+**Tools**: perplexity + deep_analysis
+**Examples**:
+- "What does BERT do and why is it useful?" -> Depth 2 (explanation needed)
+- "How does dropout prevent overfitting?" -> Depth 2 (mechanism explanation)
+
+### Depth 3 - Multi-Source Synthesis
+**Signals**: Comparisons, tradeoffs, code examples needed, tech_stack provided
+**Tools**: perplexity + deep_analysis + context7 (if tech_stack)
+**Examples**:
+- "Compare PyTorch vs TensorFlow for production" -> Depth 3 (comparison)
+- "Best practices for RAG with code examples" -> Depth 3 (code needed)
+
+### Depth 4 - Deep Research with Validation
+**Signals**: Academic rigor needed, cutting-edge topics, multi-hop reasoning, conflicting sources
+**Tools**: All tools + consensus validation + arxiv papers
+**Examples**:
+- "Survey the latest techniques for LLM context extension with citations" -> Depth 4 (academic)
+- "Design a production RAG system optimizing for latency and accuracy" -> Depth 4 (complex tradeoffs)
+
+## CRITICAL RULES
+1. **PREFER LOWER COMPLEXITY**: If uncertain between two levels, choose the LOWER one
+2. **MATCH THE QUERY**: A simple "when/what/who" question is ALWAYS Depth 1 unless it asks for analysis
+3. **DO NOT OVER-ENGINEER**: "When was X published?" does NOT need code examples or academic papers
+${options?.maxDepth ? `4. **HARD CAP**: User requested max depth ${options.maxDepth}. You MUST NOT exceed this. If query needs higher, return ${options.maxDepth} anyway.` : ''}
+
+## OUTPUT FORMAT
+Return ONLY valid JSON, no explanation:
 {
-  "complexity": 1-5,
-  "reasoning": "Why this complexity level",
+  "complexity": 1-4,
+  "reasoning": "One sentence explaining why this complexity level",
+  "signals": {
+    "is_single_fact": boolean,
+    "needs_comparison": boolean,
+    "needs_code": boolean,
+    "needs_academic_sources": boolean
+  },
   "steps": [
-    {
-      "tool": "perplexity",
-      "description": "What this step achieves",
-      "parameters": {
-        "query": "Specific search query"
-      },
-      "parallel": false
-    },
-    {
-      "tool": "deep_analysis",
-      "description": "Analyze findings",
-      "parallel": false
-    },
-    {
-      "tool": "context7",
-      "description": "Library/framework documentation with code examples",
-      "parameters": {
-        "query": "Specific library/framework documentation"
-      },
-      "parallel": false
-    },
-    {
-      "tool": "arxiv",
-      "description": "Academic papers",
-      "parameters": {
-        "query": "Specific academic paper"
-      },
-      "parallel": false
-    },
-    {
-      "tool": "consensus",
-      "description": "Multi-model validation",
-      "parameters": {
-        "query": "Specific validation query"
-      },
-      "parallel": false
-    }
-  ],
-  "estimated_time_seconds": 30
+    {"tool": "perplexity", "description": "Search for X", "parallel": false}
+  ]
 }
-
-Rules:
-1. Complexity 1: Use perplexity only
-2. Complexity 2: Add deep_analysis
-3. Complexity 3: Add context7 (if tech_stack provided)
-4. Complexity 4: Add arxiv papers and consensus validation
-5. Mark steps as parallel: true if they can run simultaneously
-6. Avoid tools for papers_read papers
-7. Keep total time under constraints if specified
-
-Return ONLY the JSON, no explanation.
 `.trim();
 }
 
