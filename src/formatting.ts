@@ -108,10 +108,6 @@ export function formatMarkdown(result: ResearchResult): string {
 export function resolveCitations(text: string, execution: ExecutionResult): string {
   const sources = execution.perplexityResult?.sources || [];
   
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'formatting.ts:resolveCitations',message:'Citation resolution input',data:{textLength:text.length,sourcesCount:sources.length,firstSource:sources[0]?.slice(0,50),hasNumericCitations:/\[\d+\]/.test(text),hasPerplexityCitations:/\[perplexity:/i.test(text),sampleText:text.slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
-  // #endregion
-  
   if (sources.length === 0) {
     return text; // No sources to resolve
   }
@@ -161,10 +157,6 @@ export function resolveCitations(text: string, execution: ExecutionResult): stri
     });
     return resolved.join(' ');
   });
-  
-  // #region agent log  
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'formatting.ts:resolveCitations:end',message:'Citation resolution output',data:{resultLength:result.length,hasUnresolvedNumeric:/\[\d+\]/.test(result),hasUnresolvedPerplexity:/\[perplexity:/i.test(result),sampleResult:result.slice(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
-  // #endregion
   
   return result;
 }

@@ -131,6 +131,7 @@ async function callAnthropic(
       method: 'POST',
       headers: {
         'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -271,7 +272,7 @@ export function getVotingConfigs(
     configs.push({ provider: 'openai', model: 'gpt-5-nano', apiKey: openaiKey });
   }
   if (anthropicKey) {
-    configs.push({ provider: 'anthropic', model: 'claude-haiku-4.5', apiKey: anthropicKey });
+    configs.push({ provider: 'anthropic', model: 'claude-haiku-4-5', apiKey: anthropicKey });
   }
   
   // Add second Gemini variant if only one provider available

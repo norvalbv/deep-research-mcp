@@ -21,6 +21,10 @@ import { compressText } from './clients/llm.js';
 import { formatCondensedView, generateSectionSummaries } from './sectioning.js';
 import { startResearchJob } from './job-orchestrator.js';
 
+// In-memory check count tracking (avoids race condition on concurrent status checks)
+// This is purely cosmetic - only used for "Still running (X/5 checks)" message
+const jobCheckCounts = new Map<string, number>();
+
 // Create the MCP server
 const server = new McpServer({
   name: 'deep-research-mcp',
@@ -251,19 +255,19 @@ Returns validated markdown report with:
       });
 
       // Execute research
-      const result = await controller.execute(
+      const result = await controller.execute({
         query,
         enrichedContext,
-        depth_level as ComplexityLevel | undefined,
-        {
+        depthLevel: (depth_level || 2) as ComplexityLevel,
+        options: {
           subQuestions: sub_questions,
           constraints,
           includeCodeExamples: include_code_examples,
           techStack: tech_stack,
           papersRead: papers_read,
           outputFormat: output_format,
-        }
-      );
+        },
+      });
 
       console.error(`\n[Research MCP] Research complete!\n`);
 
@@ -1026,13 +1030,16 @@ Poll this endpoint every ~30 seconds until status is "completed" or "failed".`,
       };
     }
 
-    // Track check count for running jobs with structured progress
+    // Track check count atomically in-memory (avoids race condition on concurrent calls)
     const MAX_CHECKS = 5;
     if (job.status === 'running' && job.progress && typeof job.progress === 'object') {
-      job.progress.checkCount = (job.progress.checkCount || 0) + 1;
+      // Atomic increment using in-memory Map (single-threaded Node.js guarantees atomicity)
+      const currentCount = (jobCheckCounts.get(job_id) || 0) + 1;
+      jobCheckCounts.set(job_id, currentCount);
+      
+      // Update progress object for response (not persisted - cosmetic only)
+      job.progress.checkCount = currentCount;
       job.progress.maxChecks = MAX_CHECKS;
-      // Fire-and-forget save to avoid blocking
-      saveJob(job).catch(err => console.error(`[Jobs] Failed to save check count:`, err));
     }
 
     const response: Record<string, unknown> = {
@@ -1059,6 +1066,8 @@ Poll this endpoint every ~30 seconds until status is "completed" or "failed".`,
     if (job.completedAt) {
       response.completed_at = new Date(job.completedAt).toISOString();
       response.duration_seconds = Math.round((job.completedAt - job.createdAt) / 1000);
+      // Clean up in-memory check counter for completed/failed jobs
+      jobCheckCounts.delete(job_id);
     }
 
     if (job.status === 'completed' && job.result) {
