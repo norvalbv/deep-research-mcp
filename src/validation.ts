@@ -14,6 +14,51 @@ import { ResearchActionPlan, extractContent } from './planning.js';
 import { DocumentationCache, GlobalManifest, PVRVerificationResult } from './types/index.js';
 import { SynthesisOutput } from './synthesis.js';
 
+/**
+ * Safe JSON parsing with repair and fallback.
+ * Handles common LLM output issues (trailing commas, unescaped quotes, etc.)
+ * 
+ * @param text - The raw text that should contain JSON
+ * @param fallback - Default value to return if parsing fails
+ * @returns Parsed JSON or fallback value
+ */
+export function safeParseJSON<T>(text: string, fallback: T): T {
+  // Step 1: Extract JSON object/array from text
+  const jsonMatch = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+  if (!jsonMatch) {
+    return fallback;
+  }
+
+  // Step 2: Apply repairs for common LLM output issues
+  let cleaned = jsonMatch[0]
+    .replace(/,\s*([}\]])/g, '$1')           // Remove trailing commas
+    .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":') // Quote unquoted keys
+    .replace(/:\s*'([^']*)'/g, ': "$1"')     // Single to double quotes in values
+    .replace(/[\x00-\x1F\x7F]/g, ' ')        // Remove control characters
+    .replace(/\n/g, '\\n')                   // Escape newlines in strings
+    .replace(/\t/g, '\\t');                  // Escape tabs
+
+  // Step 3: Try parsing
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // Step 4: More aggressive repair - escape unescaped quotes within strings
+    try {
+      // Find string values and escape internal quotes
+      cleaned = cleaned.replace(/"([^"]*?)(?<!\\)"([^"]*?)"/g, (match, before, after) => {
+        if (after.includes(':') || after.includes(',') || after.includes('}')) {
+          // This looks like a broken string boundary, try to fix
+          return `"${before}\\"${after}"`;
+        }
+        return match;
+      });
+      return JSON.parse(cleaned);
+    } catch {
+      return fallback;
+    }
+  }
+}
+
 // PVR Configuration (research-backed thresholds)
 const PVR_CONFIG = {
   ENTAILMENT_THRESHOLD: 0.85,      // arxiv:2310.03025 recommends 0.85
@@ -896,6 +941,7 @@ async function runCrossSectionalNLI(
     ? `\nGlobal Facts (source of truth):\n${manifest.keyFacts.map(f => `- ${f}`).join('\n')}\n`
     : '';
 
+  // Use reason codes instead of freeform text to prevent JSON parsing issues
   const nliPrompt = `You are a consistency checker. Find CONTRADICTIONS between claims.
 
 ${manifestContext}
@@ -904,74 +950,58 @@ ${claimsList}
 
 ---
 
-Find pairs that CONTRADICT each other. Contradiction means:
-- Different numeric values for the same metric
-- Opposite recommendations
-- Conflicting time/cost estimates
-- Mutually exclusive statements
+Find pairs that CONTRADICT each other using these reason codes:
+- NUMERIC_CONFLICT: Different numbers for the same metric
+- OPPOSITE_RECOMMENDATION: Contradictory advice
+- TIME_CONFLICT: Different time estimates
+- COST_CONFLICT: Different cost/budget figures
+- MUTUAL_EXCLUSION: Mutually exclusive statements
 
-Return JSON only:
-{
-  "contradictions": [
-    {
-      "claimA": 1,
-      "claimB": 3,
-      "reason": "Both discuss threshold but A says 0.85 while B says 0.75",
-      "severity": "high"
-    }
-  ],
-  "consistent_pairs": 0
-}
+Return ONLY this JSON structure (no other text):
+{"contradictions":[{"claimA":1,"claimB":3,"reasonCode":"NUMERIC_CONFLICT","severity":"high"}]}
 
-If no contradictions found, return empty array.
-severity: "high" = different numbers, "medium" = different approaches, "low" = minor wording`;
+Rules:
+- claimA and claimB are claim numbers from the list above
+- reasonCode must be one of the 5 codes listed
+- severity: "high" (numbers differ), "medium" (approaches differ), "low" (wording)
+- If no contradictions: {"contradictions":[]}
+- NO freeform text in any field - use ONLY the provided codes`;
 
   try {
     const response = await callLLMWithTimeout(nliPrompt, geminiKey, PVR_CONFIG.VERIFICATION_TIMEOUT_MS * 2);
     
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      // JSON repair: Fix common LLM output issues
-      let cleanedJson = jsonMatch[0]
-        .replace(/,\s*}/g, '}')           // Remove trailing commas in objects
-        .replace(/,\s*]/g, ']')           // Remove trailing commas in arrays
-        .replace(/'/g, '"')               // Convert single quotes to double quotes
-        .replace(/"\s*:\s*'/g, '": "')    // Fix quote mismatches in values
-        .replace(/'\s*,/g, '",')          // Fix trailing single quotes
-        .replace(/'\s*}/g, '"}')          // Fix closing single quotes
-        .replace(/\n/g, ' ')              // Remove newlines that break JSON
-        .replace(/\t/g, ' ')              // Remove tabs
-        .replace(/[\x00-\x1F]/g, '');     // Remove control characters
+    // Use safeParseJSON which handles all common LLM output issues
+    const parsed = safeParseJSON<{ 
+      contradictions: Array<{ 
+        claimA: number; 
+        claimB: number; 
+        reasonCode?: string;  // New: structured reason code
+        reason?: string;      // Legacy: freeform (may cause parse issues)
+        severity: string;
+      }> 
+    }>(response, { contradictions: [] });
+    
+    // Validate and transform contradictions
+    for (const c of parsed.contradictions) {
+      // Validate claim indices
+      if (typeof c.claimA !== 'number' || typeof c.claimB !== 'number') continue;
       
-      // Try to extract just the contradictions array if full JSON fails
-      let parsed;
-      try {
-        parsed = JSON.parse(cleanedJson);
-      } catch {
-        // Fallback: try to extract contradictions array directly
-        const arrayMatch = cleanedJson.match(/"contradictions"\s*:\s*(\[[^\]]*\])/);
-        if (arrayMatch) {
-          parsed = { contradictions: JSON.parse(arrayMatch[1]) };
-        } else {
-          throw new Error('Could not parse JSON or extract contradictions');
-        }
-      }
+      const claimA = allClaims[c.claimA - 1];
+      const claimB = allClaims[c.claimB - 1];
       
-      if (Array.isArray(parsed.contradictions)) {
-        for (const c of parsed.contradictions) {
-          const claimA = allClaims[c.claimA - 1];
-          const claimB = allClaims[c.claimB - 1];
-          
-          if (claimA && claimB) {
-            contradictions.push({
-              sectionA: claimA.section,
-              sectionB: claimB.section,
-              claimA: claimA.claim,
-              claimB: claimB.claim,
-              severity: c.severity || 'medium',
-            });
-          }
-        }
+      if (claimA && claimB) {
+        // Validate severity is a known value
+        const validSeverity = ['high', 'medium', 'low'].includes(c.severity) 
+          ? c.severity as 'high' | 'medium' | 'low'
+          : 'medium';
+        
+        contradictions.push({
+          sectionA: claimA.section,
+          sectionB: claimB.section,
+          claimA: claimA.claim,
+          claimB: claimB.claim,
+          severity: validSeverity,
+        });
       }
     }
   } catch (error) {
