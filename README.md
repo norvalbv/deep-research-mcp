@@ -424,6 +424,41 @@ These are spawned as subprocesses. Check:
 # Verify arXiv MCP server is installed:
 uv tool run arxiv-mcp-server --help
 ```
+
+**arXiv MCP Server Initialization Failures (EOF errors in isolated environments):**
+
+If you see `Error: calling "initialize": EOF` in environments with restricted PATH (e.g., Antigravity, CI/CD), the server may not be able to find the `uv` binary. Solutions:
+
+1. **Set UV_BINARY_PATH environment variable** (Recommended for isolated environments):
+```json
+{
+  "mcpServers": {
+    "research": {
+      "command": "node",
+      "args": ["/path/to/deep-research-mcp/dist/index.js"],
+      "env": {
+        "UV_BINARY_PATH": "/opt/homebrew/bin/uv",  // Apple Silicon
+        // or "/usr/local/bin/uv" for Intel Mac / Linux
+        "PERPLEXITY_API_KEY": "your-key",
+        "GEMINI_API_KEY": "your-key"
+      }
+    }
+  }
+}
+```
+
+2. **Install uv** if not already installed:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+3. **Common uv installation paths** (checked automatically if not in PATH):
+   - `/opt/homebrew/bin/uv` (Apple Silicon Homebrew)
+   - `/usr/local/bin/uv` (Intel Mac Homebrew / Linux)
+   - `~/.local/bin/uv` (User-local installation)
+   - `~/.cargo/bin/uv` (Cargo installation)
+
+The server now uses **lazy initialization** - the arXiv client is only created when `read_paper` or `download_paper` tools are actually called, preventing initialization failures.
 #### MCP Client Not Detecting Server
 
 1. Verify the path in your MCP config is correct (absolute path)

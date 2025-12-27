@@ -29,7 +29,7 @@ const server = new McpServer({
 
 // Initialize research controller (will be initialized on first use with env from MCP)
 let controller: ResearchController | null = null;
-const arxivClientPromise = createArxivClient();
+let arxivClientPromise: Promise<Awaited<ReturnType<typeof createArxivClient>>> | null = null;
 
 function getController(): ResearchController {
   if (!controller) {
@@ -37,6 +37,18 @@ function getController(): ResearchController {
     controller = new ResearchController(process.env as Record<string, string>);
   }
   return controller;
+}
+
+/**
+ * Lazy initialization of arXiv client.
+ * Only creates the client when actually needed (when read_paper or download_paper is called).
+ * This prevents server initialization failures in isolated environments where uv may not be in PATH.
+ */
+function getArxivClient(): Promise<Awaited<ReturnType<typeof createArxivClient>>> {
+  if (!arxivClientPromise) {
+    arxivClientPromise = createArxivClient(process.env.ARXIV_STORAGE_PATH);
+  }
+  return arxivClientPromise;
 }
 
 // ==================== ASYNC JOB STORAGE ====================
@@ -452,7 +464,7 @@ This is different from the brief summaries provided by the research tool - this 
     },
   },
   async ({ arxiv_id, maximum_output_length }) => {
-    const arxivClient = (await arxivClientPromise).client;
+    const arxivClient = (await getArxivClient()).client;
     const result = await callArxivPassthroughTool({
       arxivClient,
       toolName: 'read_paper',
@@ -501,7 +513,7 @@ Note: Use read_paper if you want to analyze the paper content immediately - this
     },
   },
   async ({ arxiv_id }) => {
-    const arxivClient = (await arxivClientPromise).client;
+    const arxivClient = (await getArxivClient()).client;
     const result = await callArxivPassthroughTool({
       arxivClient,
       toolName: 'download_paper',
@@ -880,7 +892,7 @@ server.registerTool(
       sub_questions: z
         .array(z.string())
         .optional()
-        .describe('Specific sub-questions to answer. Example: ["What makes data representative?", "How to generate hard negatives?", "Edge cases for entity extraction?"]'),
+        .describe('Specific sub-questions to answer. Use this if you want to answer specific questions about the research. Example: ["What makes data representative?", "How to generate hard negatives?", "Edge cases for entity extraction?"]'),
       
       tech_stack: z
         .array(z.string())
@@ -1014,13 +1026,35 @@ Poll this endpoint every ~30 seconds until status is "completed" or "failed".`,
       };
     }
 
+    // Track check count for running jobs with structured progress
+    const MAX_CHECKS = 5;
+    if (job.status === 'running' && job.progress && typeof job.progress === 'object') {
+      job.progress.checkCount = (job.progress.checkCount || 0) + 1;
+      job.progress.maxChecks = MAX_CHECKS;
+      // Fire-and-forget save to avoid blocking
+      saveJob(job).catch(err => console.error(`[Jobs] Failed to save check count:`, err));
+    }
+
     const response: Record<string, unknown> = {
       job_id: job.id,
       status: job.status,
       query: job.query,
-      progress: job.progress,
       created_at: new Date(job.createdAt).toISOString(),
     };
+
+    // Add structured progress or string progress
+    if (job.status === 'running') {
+      if (typeof job.progress === 'object') {
+        response.progress = {
+          ...job.progress,
+          ...(job.progress.checkCount && job.progress.checkCount >= 3 ? {
+            message: `Still running (${job.progress.checkCount}/${MAX_CHECKS} checks). If unresponsive after ${MAX_CHECKS} checks, inform user and exit.`
+          } : {}),
+        };
+      } else {
+        response.progress = job.progress;
+      }
+    }
 
     if (job.completedAt) {
       response.completed_at = new Date(job.completedAt).toISOString();

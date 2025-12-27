@@ -126,7 +126,7 @@ export function resolveCitations(text: string, execution: ExecutionResult): stri
         const urlObj = new URL(url);
         domain = urlObj.hostname.replace(/^www\./, '');
       } catch { /* keep 'source' */ }
-      return `[[${domain}]](${url})`;
+      return `[${domain}](${url})`;
     }
     return null;
   };

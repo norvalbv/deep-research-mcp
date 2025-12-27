@@ -6,6 +6,17 @@ import { Section, ExecutiveSummary } from './types/index.js';
 // Jobs directory for file-based persistence
 export const JOBS_DIR = join(homedir(), '.research-jobs');
 
+// Structured progress info for agents to make informed polling decisions
+export interface ProgressInfo {
+  currentStep: string;
+  stepNumber: number;
+  totalSteps: number;
+  estimatedSecondsRemaining: number;
+  checkCount?: number;       // How many times check_status called
+  maxChecks?: number;        // Limit before suggesting user exit
+  note?: string;             // e.g., "Poor results, re-synthesizing..."
+}
+
 // Structured research result (from controller) - stored for direct access
 export interface StructuredResearchResult {
   synthesis: string;
@@ -30,7 +41,7 @@ export interface ResearchJob {
   result?: string; // Markdown report
   structured?: StructuredResearchResult; // Direct structured data (no parsing needed)
   error?: string;
-  progress?: string;
+  progress?: string | ProgressInfo; // Structured progress for informed polling
   forPanel?: boolean; // Return structured JSON for agent-chat integration
   reportPath?: string; // Path to saved report file
 }

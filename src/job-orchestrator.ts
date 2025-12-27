@@ -1,6 +1,6 @@
-import { ResearchController } from './controller.js';
+import { ResearchController, OnProgressCallback } from './controller.js';
 import { ComplexityLevel } from './types/index.js';
-import { ResearchJob, saveJob, JOBS_DIR } from './jobs.js';
+import { ResearchJob, saveJob, JOBS_DIR, ProgressInfo } from './jobs.js';
 import { buildEnrichedContext, generateFilename, generateReportId } from './panel-output.js';
 import { registerReport } from './storage/report-registry.js';
 import { writeFile, mkdir } from 'fs/promises';
@@ -115,8 +115,15 @@ async function executeResearchInBackground(
 ): Promise<void> {
   try {
     job.status = 'running';
-    job.progress = 'Executing research...';
+    job.progress = { currentStep: 'Initializing', stepNumber: 1, totalSteps: 8, estimatedSecondsRemaining: 90 };
     await saveJob(job);
+
+    // Create progress callback to update job in real-time
+    const onProgress: OnProgressCallback = (progress: ProgressInfo) => {
+      job.progress = progress;
+      // Fire-and-forget save to avoid blocking
+      saveJob(job).catch(err => console.error(`[Jobs] Failed to save progress:`, err));
+    };
 
     const result = await controller.execute({
       query: params.query,
@@ -129,7 +136,8 @@ async function executeResearchInBackground(
         techStack: params.tech_stack || [],
         papersRead: params.papers_read || [],
         outputFormat: params.output_format || 'summary',
-      }
+      },
+      onProgress,
     });
 
     job.status = 'completed';

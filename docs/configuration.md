@@ -17,7 +17,8 @@ Operator guide for configuring Research MCP Server.
 |----------|-------------|---------|
 | `OPENAI_API_KEY` | OpenAI API key for multi-model consensus | - |
 | `CONTEXT7_API_KEY` | Context7 API key for library documentation | - |
-| `ARXIV_STORAGE_PATH` | Path for arXiv paper storage | `~/arxiv-papers/` |
+| `ARXIV_STORAGE_PATH` | Path for arXiv paper storage | `~/.arxiv-mcp` |
+| `UV_BINARY_PATH` | Explicit path to `uv` binary (for isolated environments) | Auto-discovered |
 
 ## MCP Configuration
 
@@ -36,12 +37,15 @@ Add to your MCP client configuration:
         "PERPLEXITY_API_KEY": "your-key",
         "GEMINI_API_KEY": "your-key",
         "OPENAI_API_KEY": "your-key",
-        "ARXIV_STORAGE_PATH": "/path/to/storage/"
+        "ARXIV_STORAGE_PATH": "/path/to/storage/",
+        "UV_BINARY_PATH": "/opt/homebrew/bin/uv"
       }
     }
   }
 }
 ```
+
+**Note on UV_BINARY_PATH**: Required in isolated environments (e.g., Antigravity, CI/CD) where PATH is restricted. The server automatically checks common installation paths (`/opt/homebrew/bin/uv`, `/usr/local/bin/uv`, `~/.local/bin/uv`, `~/.cargo/bin/uv`) if not set. Set this explicitly if `uv` is not in your PATH.
 
 ## PVR Configuration
 
@@ -160,6 +164,37 @@ If arXiv returns off-topic papers:
 1. The keyword extraction uses Gemini - ensure API key is set
 2. Check `[arXiv] Keywords:` in logs for extracted terms
 3. Category filtering targets CS/AI/ML by default
+
+### arXiv MCP Server Initialization Failures (EOF errors)
+
+If you see `Error: calling "initialize": EOF` in isolated environments (Antigravity, CI/CD):
+
+**Root cause**: The server cannot find the `uv` binary because PATH is restricted to `/usr/bin:/bin`.
+
+**Solutions**:
+
+1. **Set UV_BINARY_PATH** (Recommended):
+```json
+{
+  "env": {
+    "UV_BINARY_PATH": "/opt/homebrew/bin/uv"  // Apple Silicon
+    // or "/usr/local/bin/uv" for Intel Mac / Linux
+  }
+}
+```
+
+2. **Verify uv installation**:
+```bash
+# Check if uv exists at common paths
+ls -la /opt/homebrew/bin/uv
+ls -la /usr/local/bin/uv
+ls -la ~/.local/bin/uv
+
+# Install if missing
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+3. **Lazy initialization**: The server now only creates the arXiv client when `read_paper` or `download_paper` tools are called, preventing initialization failures. The server will initialize successfully even if arXiv tools are unavailable.
 
 ## Performance Tuning
 
