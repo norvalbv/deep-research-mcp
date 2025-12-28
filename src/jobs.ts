@@ -20,7 +20,7 @@ export interface ProgressInfo {
 // Structured research result (from controller) - stored for direct access
 export interface StructuredResearchResult {
   synthesis: string;
-  critiques?: string[];
+  critiques?: Array<{ section: string; issue: string }>;
   criticalGaps?: string[];
   sources?: string[];
   papers?: Array<{ id: string; title: string; summary: string; url: string }>;

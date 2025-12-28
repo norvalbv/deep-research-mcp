@@ -5,8 +5,13 @@
  * Note: Local interface definitions used to avoid circular imports
  */
 
+interface ChallengeCritique {
+  section: string;
+  issue: string;
+}
+
 interface ChallengeResult {
-  critiques: string[];
+  critiques: ChallengeCritique[];
   hasSignificantGaps: boolean;
 }
 
@@ -43,7 +48,7 @@ export function buildValidationContent(
     parts.push('### Critical Challenge\n');
     if (validation.challenge.hasSignificantGaps && validation.challenge.critiques.length > 0) {
       validation.challenge.critiques.forEach((critique, i) => {
-        parts.push(`${i + 1}. ${critique}`);
+        parts.push(`${i + 1}. [${critique.section}] ${critique.issue}`);
       });
     } else {
       parts.push('No significant gaps found in the synthesis.');

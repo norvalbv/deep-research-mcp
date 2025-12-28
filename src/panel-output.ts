@@ -10,7 +10,7 @@ export interface PanelOutput {
   summary: string;
   key_findings: string[];
   recommendations: string[];
-  critical_challenge?: string[];
+  critical_challenge?: Array<{ section: string; issue: string }>;
   key_gaps?: string[];
   sources?: string[];
   papers?: Array<{ id: string; title: string; summary: string; url: string }>;
@@ -97,7 +97,8 @@ export function buildPanelOutput(
   if (structured.criticalGaps?.length) {
     result.key_gaps = structured.criticalGaps;
   } else if (structured.critiques?.length) {
-    result.key_gaps = structured.critiques;
+    // Convert structured critiques to string array for key_gaps
+    result.key_gaps = structured.critiques.map(c => `[${c.section}] ${c.issue}`);
   }
 
   if (structured.sources?.length) {

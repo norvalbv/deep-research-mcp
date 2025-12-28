@@ -9,8 +9,13 @@ import { SynthesisOutput } from './synthesis.js';
 import { buildValidationContent } from './validation-content.js';
 
 // Re-define locally to avoid circular import
+interface ChallengeCritique {
+  section: string;
+  issue: string;
+}
+
 interface ChallengeResult {
-  critiques: string[];
+  critiques: ChallengeCritique[];
   hasSignificantGaps: boolean;
   rawResponse: string;
 }

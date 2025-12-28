@@ -206,6 +206,89 @@ Return ONLY valid JSON. No other text.`.trim();
 }
 
 /**
+ * Run challenge on specific sections only (R-235913:q3 - differential validation)
+ * Returns critiques only for the specified sections, preserving cached verdicts for unchanged sections.
+ * 
+ * @param geminiKey - API key
+ * @param sectionContents - Map of section ID to content (e.g., { "overview": "...", "q1": "..." })
+ * @param query - Original research query
+ * @param context - Validation context (code examples, constraints, etc.)
+ */
+export async function runSectionChallenge(
+  geminiKey: string | undefined,
+  sectionContents: Record<string, string>,
+  query: string,
+  context?: {
+    includeCodeExamples?: boolean;
+    constraints?: string[];
+  }
+): Promise<ChallengeResult | undefined> {
+  if (!geminiKey) return undefined;
+
+  const sectionIds = Object.keys(sectionContents);
+  console.error(`[Validation] Running section-specific challenge for: ${sectionIds.join(', ')}`);
+
+  // Build a targeted synthesis containing only the sections to validate
+  const synthesisText = sectionIds
+    .map(id => `## ${id.toUpperCase()}\n${sectionContents[id]}`)
+    .join('\n\n');
+
+  const codeChecks = context?.includeCodeExamples
+    ? `- Code completeness (no TODO/FIXME)\n- Executability`
+    : '';
+
+  const prompt = `You are a CRITICAL REVIEWER. Evaluate ONLY the following sections for quality issues.
+
+SECTIONS TO VALIDATE: ${sectionIds.join(', ')}
+
+ORIGINAL QUERY: ${query}
+
+${context?.constraints?.length ? `CONSTRAINTS:\n${context.constraints.join('\n')}` : ''}
+
+---
+CONTENT:
+${synthesisText}
+---
+
+CHECK FOR (in order of severity):
+${codeChecks}
+- Factual accuracy and specific evidence
+- Clear reasoning and logic
+- Completeness (does it answer the question?)
+
+RESPONSE FORMAT (JSON only):
+{
+  "pass": true/false,
+  "critiques": [
+    { "section": "${sectionIds[0] || 'overview'}", "issue": "Description of issue" }
+  ]
+}
+
+RULES:
+- Each critique MUST have "section" (one of: ${sectionIds.join(', ')}) and "issue" fields
+- Only report issues in the sections being validated
+- Return empty critiques array if sections pass
+
+Return ONLY valid JSON.`;
+
+  try {
+    const response = await callLLM(prompt, {
+      provider: 'gemini',
+      model: 'gemini-2.5-flash-lite',
+      apiKey: geminiKey,
+      timeout: 20000,
+      maxOutputTokens: 2000,
+      temperature: 0.1,
+    });
+
+    return parseChallengeResponse(response.content || '');
+  } catch (error) {
+    console.error('[Validation] Section challenge failed:', error);
+    return undefined;
+  }
+}
+
+/**
  * Run multi-model consensus validation (depth >= 3)
  * NOTE: This is now secondary to the challenge/vote flow
  */
@@ -361,20 +444,38 @@ export async function runSufficiencyVote(
     };
   }
 
-  // 4-tier category aggregation (R-224005)
-  const aggregatedCounts: CritiqueCounts = { critical: 0, major: 0, minor: 0, pedantic: 0 };
+  // 4-tier category aggregation using MEDIAN to handle outliers (R-235913:q4)
+  // Rationale: If gpt-5-nano reports 9 MAJOR but others report 0-1, median gives stable result
+  const getMedian = (values: number[]): number => {
+    if (values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : Math.ceil((sorted[mid - 1] + sorted[mid]) / 2);
+  };
+  
+  // Collect per-model counts for median calculation
+  const perModelCounts = validVotes.map(v => v.counts);
+  
+  const aggregatedCounts: CritiqueCounts = {
+    critical: getMedian(perModelCounts.map(c => c.critical)),
+    major: getMedian(perModelCounts.map(c => c.major)),
+    minor: getMedian(perModelCounts.map(c => c.minor)),
+    pedantic: getMedian(perModelCounts.map(c => c.pedantic)),
+  };
+  
+  // Log outlier detection for debugging
+  const maxMajor = Math.max(...perModelCounts.map(c => c.major));
+  const minMajor = Math.min(...perModelCounts.map(c => c.major));
+  if (maxMajor - minMajor > 3) {
+    console.error(`[Vote] Outlier detected: MAJOR counts range from ${minMajor} to ${maxMajor}, using median ${aggregatedCounts.major}`);
+  }
+  
   const allCriticalIssues: string[] = [];
   const allMajorIssues: string[] = [];
   const allMinorIssues: string[] = [];
   const allPedanticIssues: string[] = [];
   
   for (const vote of validVotes) {
-    // Aggregate counts
-    aggregatedCounts.critical += vote.counts.critical;
-    aggregatedCounts.major += vote.counts.major;
-    aggregatedCounts.minor += vote.counts.minor;
-    aggregatedCounts.pedantic += vote.counts.pedantic;
-    
     // Collect issues by category
     for (const critique of vote.critiques) {
       switch (critique.category) {
@@ -403,6 +504,10 @@ export async function runSufficiencyVote(
   // Collect all critiques with section attribution for per-section analysis
   const allCritiques: CategorizedCritique[] = validVotes.flatMap(v => v.critiques);
   
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:407',message:'H1: All critiques from votes',data:{count:allCritiques.length,samples:allCritiques.slice(0,5).map(c=>({section:c.section,category:c.category,issue:c.issue.slice(0,50)}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+  // #endregion
+  
   // Group critiques by section and apply thresholds per-section (R-220053)
   const critiquesBySection: Record<string, CategorizedCritique[]> = {};
   for (const critique of allCritiques) {
@@ -410,6 +515,11 @@ export async function runSufficiencyVote(
     if (!critiquesBySection[section]) critiquesBySection[section] = [];
     critiquesBySection[section].push(critique);
   }
+  
+  // #region agent log
+  const sectionSummary = Object.entries(critiquesBySection).map(([s,cs])=>({section:s,count:cs.length,major:cs.filter(c=>c.category==='MAJOR').length,critical:cs.filter(c=>c.category==='CRITICAL').length}));
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:418',message:'H4: Per-section grouping',data:{sections:Object.keys(critiquesBySection),sectionSummary},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
+  // #endregion
   
   // Calculate failing sections (1+ CRITICAL or 3+ MAJOR in that section)
   const failingSections: string[] = [];
@@ -433,6 +543,23 @@ export async function runSufficiencyVote(
   
   // Apply threshold-based decision (R-224005)
   const sufficient = !(hasCriticalGap || hasTooManyMajor);
+  
+  // If global threshold fails but no per-section fails, add sections with ANY MAJOR issues
+  // This enables targeted re-roll of problematic sections rather than full re-synthesis
+  // 'global' is ONLY used for true cross-section contradictions (e.g., PVR failures)
+  if (!sufficient && failingSections.length === 0) {
+    // Find all sections with at least 1 MAJOR issue
+    for (const [section, critiques] of Object.entries(critiquesBySection)) {
+      const majorCount = critiques.filter(c => c.category === 'MAJOR').length;
+      if (majorCount > 0) {
+        failingSections.push(section);
+      }
+    }
+  }
+  
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:450',message:'H2: Final failingSections',data:{failingSections,sufficient,hasCriticalGap,hasTooManyMajor,globalMajor:aggregatedCounts.major},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2-FIX'})}).catch(()=>{});
+  // #endregion
 
   console.error(`[Vote] Issue Counts - Critical: ${aggregatedCounts.critical}, Major: ${aggregatedCounts.major}, Minor: ${aggregatedCounts.minor}, Pedantic: ${aggregatedCounts.pedantic}`);
   if (failingSections.length > 0) {
@@ -479,9 +606,14 @@ function buildVotePrompt(
     perplexitySources?: string[];
   }
 ): string {
+  // Format critiques WITH section attribution for vote LLMs to preserve
   const critiquePoints = challenge.critiques.length > 0
-    ? challenge.critiques.map((c, i) => `${i + 1}. ${c}`).join('\n')
+    ? challenge.critiques.map((c, i) => `${i + 1}. [${c.section}] ${c.issue}`).join('\n')
     : challenge.rawResponse;
+
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:buildVotePrompt',message:'H1: Critique points sent to vote LLMs',data:{critiqueCount:challenge.critiques.length,uniqueSections:[...new Set(challenge.critiques.map(c=>c.section))],samplePoints:critiquePoints.split('\n').slice(0,3)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+  // #endregion
 
   // Build valid citation sources section
   const citationFormatsSection = `**VALID CITATION FORMATS (NOT hallucinations):**
@@ -666,13 +798,13 @@ function parseVoteResponse(
       }
     }
     
-    // Also check for explicit counts in response
-    if (parsed.counts && typeof parsed.counts === 'object') {
-      counts.critical = parsed.counts.critical || counts.critical;
-      counts.major = parsed.counts.major || counts.major;
-      counts.minor = parsed.counts.minor || counts.minor;
-      counts.pedantic = parsed.counts.pedantic || counts.pedantic;
-    }
+    // #region agent log
+    const selfReported = parsed.counts || {};
+    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse',message:'FIX: Counts comparison',data:{model,actualCounts:counts,selfReported,uniqueSections:[...new Set(critiques.map(c=>c.section))]},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'FIX'})}).catch(()=>{});
+    // #endregion
+    
+    // NOTE: Do NOT use parsed.counts - LLM self-reported counts often don't match actual critiques
+    // We calculated counts above from the actual critique array, which is accurate
     
     // Legacy support: convert critical_gaps array to CRITICAL critiques
     if (Array.isArray(parsed.critical_gaps)) {

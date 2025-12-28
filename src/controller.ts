@@ -11,7 +11,7 @@ import { ComplexityLevel, Section, ExecutiveSummary } from './types/index.js';
 import { createFallbackPlan, generateConsensusPlan, ResearchActionPlan } from './planning.js';
 import { executeResearchPlan } from './execution.js';
 import { synthesizeFindings, SynthesisOutput, extractGlobalManifest, formatManifestForPrompt } from './synthesis.js';
-import { runChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, runPVRVerification, getPVRConfig, ChallengeResult, SufficiencyVote, CategorizedCritique } from './validation.js';
+import { runChallenge, runSectionChallenge, runConsensusValidation, runSufficiencyVote, validateCodeAgainstDocs, runPVRVerification, getPVRConfig, ChallengeResult, SufficiencyVote, CategorizedCritique } from './validation.js';
 import { GlobalManifest, PVRVerificationResult } from './types/index.js';
 import { formatMarkdown, ResearchResult, resolveCitations } from './formatting.js';
 import { buildValidationContent } from './validation-content.js';
@@ -223,6 +223,24 @@ export class ResearchController {
       // Re-synthesis if critique wins (max 1 iteration)
       // Targeted approach (R-220053): Only re-roll failing sections unless overview fails
       if (sufficiency && !sufficiency.sufficient && sufficiency.failingSections.length > 0) {
+        // Convergence criteria (R-235913:q2): Track MAJOR count before re-roll
+        const initialMajorCount = sufficiency.details.reduce(
+          (sum, d) => sum + d.critiques.filter(c => c.category === 'MAJOR').length, 0
+        );
+        console.error(`[Research] Initial MAJOR count before re-roll: ${initialMajorCount}`);
+        
+        // Differential validation (R-235913:q3): Cache critiques for unchanged sections
+        const cachedCritiques: Record<string, CategorizedCritique[]> = {};
+        const allCritiques = sufficiency.details.flatMap(d => d.critiques);
+        for (const critique of allCritiques) {
+          const section = critique.section || 'overview';
+          if (!cachedCritiques[section]) cachedCritiques[section] = [];
+          cachedCritiques[section].push(critique);
+        }
+        
+        // Store previous synthesis in case quality degrades
+        const previousSynthesis = { ...synthesisOutput };
+        
         // Extend total steps for re-synthesis
         totalSteps = 10;
         improved = true;
@@ -231,23 +249,28 @@ export class ResearchController {
         await this.gatherDataForGaps(execution, sufficiency.criticalGaps, query);
         currentStep++;
         
+        // Track which sections we're re-rolling
+        const rerolledSections = sufficiency.failingSections.filter(s => s !== 'global');
+        
         // Branch: targeted vs full re-synthesis based on which sections failed
-        if (sufficiency.failingSections.includes('overview')) {
-          // Overview failed → full re-synthesis (unavoidable, it's the anchor)
-          emitProgress('Re-synthesis', 40, 'Overview has issues - full re-synthesis required.');
-          console.error('[Research] Overview failed - full re-synthesis with gaps...');
+        // 'global' = cross-section issues (spread across many sections) → full re-synthesis
+        // 'overview'/'q1'/etc = section-specific → targeted re-roll
+        if (sufficiency.failingSections.includes('global')) {
+          // Global cross-section issues → full re-synthesis required
+          emitProgress('Re-synthesis', 40, 'Cross-section issues detected - full re-synthesis required.');
+          console.error('[Research] Global issues detected - full re-synthesis with gaps...');
           synthesisOutput = await this.resynthesizeWithGaps(
             query, enrichedContext, execution, options, sufficiency.criticalGaps, complexity
           );
         } else {
-          // Only sub-questions failed → targeted re-roll (keep overview as anchor)
+          // Specific sections failed (including overview) → targeted re-roll
           const failingCount = sufficiency.failingSections.length;
           emitProgress('Re-synthesis', 40, `Re-rolling ${failingCount} failing section(s): ${sufficiency.failingSections.join(', ')}`);
           console.error(`[Research] Targeted re-roll of ${failingCount} sections: ${sufficiency.failingSections.join(', ')}`);
           synthesisOutput = await this.rerollFailingSections(
             synthesisOutput,
             sufficiency.failingSections,
-            sufficiency.details.flatMap(d => d.critiques),
+            allCritiques,
             execution,
             options
           );
@@ -256,12 +279,63 @@ export class ResearchController {
         const newSynthesisText = this.synthesisOutputToText(synthesisOutput);
         currentStep++;
         
-        // Final challenge (no more iterations)
+        // Final challenge - use differential validation for targeted re-rolls (R-235913:q3)
         emitProgress('Final validation', 15);
-        const finalChallenge = await runChallenge(this.env.GEMINI_API_KEY, query, newSynthesisText, challengeContext);
+        
+        let finalChallenge: ChallengeResult | undefined;
+        
+        if (sufficiency.failingSections.includes('global')) {
+          // Full re-synthesis → re-challenge everything
+          finalChallenge = await runChallenge(this.env.GEMINI_API_KEY, query, newSynthesisText, challengeContext);
+        } else {
+          // Targeted re-roll → only challenge re-rolled sections
+          console.error(`[Research] Differential validation: only challenging ${rerolledSections.join(', ')}`);
+          
+          // Build section contents for re-rolled sections only
+          const sectionContents: Record<string, string> = {};
+          for (const sectionId of rerolledSections) {
+            if (sectionId === 'overview') {
+              sectionContents['overview'] = synthesisOutput.overview;
+            } else if (synthesisOutput.subQuestions?.[sectionId]) {
+              sectionContents[sectionId] = synthesisOutput.subQuestions[sectionId].answer;
+            }
+          }
+          
+          // Run section-specific challenge
+          const sectionChallenge = await runSectionChallenge(
+            this.env.GEMINI_API_KEY,
+            sectionContents,
+            query,
+            { includeCodeExamples: options?.includeCodeExamples, constraints: options?.constraints }
+          );
+          
+          // Merge: new critiques for re-rolled sections + cached critiques for unchanged sections
+          const mergedCritiques: Array<{ section: string; issue: string }> = [];
+          
+          // Add new critiques from re-rolled sections
+          if (sectionChallenge?.critiques) {
+            mergedCritiques.push(...sectionChallenge.critiques);
+          }
+          
+          // Add cached critiques from unchanged sections
+          for (const [section, critiques] of Object.entries(cachedCritiques)) {
+            if (!rerolledSections.includes(section)) {
+              console.error(`[Research] Keeping ${critiques.length} cached critiques for unchanged section: ${section}`);
+              mergedCritiques.push(...critiques.map(c => ({ section: c.section, issue: c.issue })));
+            }
+          }
+          
+          finalChallenge = {
+            critiques: mergedCritiques,
+            hasSignificantGaps: mergedCritiques.length > 0,
+            rawResponse: 'Merged from differential validation',
+          };
+          
+          console.error(`[Research] Merged critiques: ${mergedCritiques.length} (${sectionChallenge?.critiques?.length || 0} new + ${mergedCritiques.length - (sectionChallenge?.critiques?.length || 0)} cached)`);
+        }
         
         if (finalChallenge?.hasSignificantGaps) {
-          sufficiency = await runSufficiencyVote(
+          const newSufficiency = await runSufficiencyVote(
             this.env.GEMINI_API_KEY, 
             query, 
             newSynthesisText, 
@@ -270,6 +344,26 @@ export class ResearchController {
             manifest.keyFacts,
             challengeContext.validSources
           );
+          
+          if (!newSufficiency) {
+            console.error(`[Research] Vote failed - keeping original synthesis`);
+          } else {
+            // Convergence criteria (R-235913:q2): Check if quality improved
+            const newMajorCount = newSufficiency.details.reduce(
+              (sum, d) => sum + d.critiques.filter(c => c.category === 'MAJOR').length, 0
+            );
+            console.error(`[Research] New MAJOR count after re-roll: ${newMajorCount} (was ${initialMajorCount})`);
+            
+            // If quality degraded (MAJOR count increased or didn't decrease), revert to previous version
+            if (newMajorCount >= initialMajorCount) {
+              console.error(`[Research] Quality degraded or unchanged - reverting to previous synthesis`);
+              synthesisOutput = previousSynthesis;
+              // Keep original sufficiency (it was better)
+            } else {
+              console.error(`[Research] Quality improved - using re-synthesized version`);
+              sufficiency = newSufficiency;
+            }
+          }
         } else {
           // No gaps after re-synthesis, synthesis wins
           sufficiency = {
@@ -597,7 +691,9 @@ export class ResearchController {
 
   /**
    * Targeted re-roll: Only re-synthesize sections that failed validation
-   * Based on R-220053 (granular validation) - anchor on overview as source of truth
+   * Based on R-220053 (granular validation)
+   * - 'overview' → re-roll overview, keep sub-questions as reference
+   * - 'q1'/'q2'/etc → re-roll sub-question, use overview as anchor
    */
   private async rerollFailingSections(
     synthesis: SynthesisOutput,
@@ -606,23 +702,59 @@ export class ResearchController {
     execution: any,
     options: ResearchOptions | undefined
   ): Promise<SynthesisOutput> {
-    // Keep overview as anchor (source of truth)
     const result: SynthesisOutput = {
       overview: synthesis.overview,
       subQuestions: { ...synthesis.subQuestions },
       additionalInsights: synthesis.additionalInsights,
     };
 
-    // Re-roll each failing section
+    // Handle overview re-roll first (if needed)
+    if (failingSections.includes('overview')) {
+      const overviewCritiques = critiques
+        .filter(c => c.section === 'overview')
+        .map(c => `[${c.category}] ${c.issue}`)
+        .join('\n');
+
+      console.error(`[Research] Re-rolling overview due to critiques: ${overviewCritiques.slice(0, 100)}...`);
+
+      const overviewPrompt = this.buildOverviewRerollPrompt(
+        synthesis.overview,
+        overviewCritiques,
+        execution,
+        options
+      );
+
+      try {
+        const { callLLM } = await import('./clients/llm.js');
+        const response = await callLLM(overviewPrompt, {
+          provider: 'gemini',
+          model: 'gemini-2.5-flash-lite',
+          apiKey: this.env.GEMINI_API_KEY,
+          timeout: 30000,
+          maxOutputTokens: 4000,
+          temperature: 0.2,
+        });
+        result.overview = response.content.trim();
+      } catch (error) {
+        console.error(`[Research] Failed to re-roll overview:`, error);
+      }
+    }
+
+    // Re-roll each failing sub-question
     for (const sectionId of failingSections) {
-      // Skip overview - if overview fails, caller should use full re-synthesis
-      if (sectionId === 'overview' || !result.subQuestions?.[sectionId]) continue;
+      if (sectionId === 'overview' || sectionId === 'global') continue;
+      if (!result.subQuestions?.[sectionId]) continue;
 
       const subQ = result.subQuestions[sectionId];
       const subQIndex = parseInt(sectionId.replace('q', ''), 10) - 1;
       const subQData = execution.subQuestionResults?.[subQIndex];
+      
+      // Include current answer for minimal edit approach (R-235913:q1)
+      const subQDataWithAnswer = {
+        ...subQData,
+        synthesis: subQ.answer, // Pass current answer so LLM can make minimal edits
+      };
 
-      // Build critique context for this section
       const sectionCritiques = critiques
         .filter(c => c.section === sectionId)
         .map(c => `[${c.category}] ${c.issue}`)
@@ -630,12 +762,11 @@ export class ResearchController {
 
       console.error(`[Research] Re-rolling section ${sectionId} due to critiques: ${sectionCritiques.slice(0, 100)}...`);
 
-      // Build re-roll prompt with critique context
       const rerollPrompt = this.buildCritiqueRerollPrompt(
         subQ.question,
-        synthesis.overview,
+        result.overview, // Use potentially updated overview as anchor
         sectionCritiques,
-        subQData,
+        subQDataWithAnswer,
         options
       );
 
@@ -656,7 +787,6 @@ export class ResearchController {
         };
       } catch (error) {
         console.error(`[Research] Failed to re-roll ${sectionId}:`, error);
-        // Keep original on failure
       }
     }
 
@@ -664,8 +794,47 @@ export class ResearchController {
   }
 
   /**
-   * Build prompt for critique-driven re-rolling
-   * Includes specific critiques to address
+   * Build prompt for overview re-roll using MINIMAL LOCALIZED EDITS (R-235913:q1)
+   * Only fix the specific issues, don't rewrite the entire section
+   */
+  private buildOverviewRerollPrompt(
+    currentOverview: string,
+    critiqueContext: string,
+    execution: any,
+    options?: ResearchOptions
+  ): string {
+    const codeInstruction = options?.includeCodeExamples
+      ? 'You MAY include code examples if relevant to fixing the critiques.'
+      : 'Do NOT add code examples.';
+
+    const sourceSummary = execution.perplexityResult?.content
+      ? `\nSource Data (for reference):\n${execution.perplexityResult.content.slice(0, 1500)}\n`
+      : '';
+
+    return `You are making MINIMAL EDITS to fix specific issues in an overview section.
+
+CURRENT OVERVIEW:
+${currentOverview}
+
+CRITIQUES TO FIX:
+${critiqueContext}
+
+${sourceSummary}
+
+CRITICAL INSTRUCTIONS (R-235913):
+- Make ONLY the smallest changes necessary to address each critique
+- DO NOT rewrite sentences that are not mentioned in the critiques
+- DO NOT change the structure, ordering, or length significantly
+- DO NOT introduce new topics, claims, or content not in the original
+- Preserve all content that is NOT criticized
+- ${codeInstruction}
+
+Return the overview with MINIMAL targeted fixes applied. Keep unchanged content EXACTLY as-is.`.trim();
+  }
+
+  /**
+   * Build prompt for critique-driven re-rolling using MINIMAL LOCALIZED EDITS (R-235913:q1)
+   * Only fix the specific issues, don't rewrite the entire section
    */
   private buildCritiqueRerollPrompt(
     question: string,
@@ -675,33 +844,40 @@ export class ResearchController {
     options?: ResearchOptions
   ): string {
     const dataSection = subQData?.perplexityResult?.content
-      ? `\nResearch Data:\n${subQData.perplexityResult.content.slice(0, 1500)}\n`
+      ? `\nSource Data (for reference):\n${subQData.perplexityResult.content.slice(0, 1500)}\n`
       : '';
 
     const codeInstruction = options?.includeCodeExamples
-      ? 'Include complete, working code examples if relevant.'
-      : 'Do NOT include code examples - focus on concepts and analysis.';
+      ? 'You MAY include code if relevant to fixing the critiques.'
+      : 'Do NOT add code examples.';
 
-    return `You are re-synthesizing a section that FAILED quality validation.
+    // Get current answer if available from subQData
+    const currentAnswer = subQData?.synthesis || '';
+    const currentSection = currentAnswer 
+      ? `\nCURRENT ANSWER:\n${currentAnswer}\n`
+      : '';
+
+    return `You are making MINIMAL EDITS to fix specific issues in a sub-question answer.
 
 SUB-QUESTION: ${question}
+${currentSection}
+ANCHOR (main overview - ensure consistency):
+${overviewAnchor.slice(0, 1500)}
 
-ANCHOR (main overview - this is the source of truth):
-${overviewAnchor.slice(0, 2000)}
-
-CRITIQUES TO ADDRESS (you MUST fix these issues):
+CRITIQUES TO FIX:
 ${critiqueContext}
 
 ${dataSection}
 
-YOUR TASK:
-Re-write the answer to this sub-question so that it:
-1. ADDRESSES all the critiques listed above
-2. ALIGNS with the anchor overview
-3. Provides specific evidence and citations
-4. ${codeInstruction}
+CRITICAL INSTRUCTIONS (R-235913):
+- Make ONLY the smallest changes necessary to address each critique
+- DO NOT rewrite sentences that are not mentioned in the critiques
+- DO NOT change the structure or length significantly
+- MUST align with the anchor overview
+- Preserve all content that is NOT criticized
+- ${codeInstruction}
 
-Write the answer directly, no preamble.`;
+Return the answer with MINIMAL targeted fixes applied. Keep unchanged content EXACTLY as-is.`;
   }
 
   /**

@@ -112,6 +112,84 @@ Final quality checks:
 
 **Files:** `src/validation.ts` (runChallenge, runConsensusValidation, runSufficiencyVote)
 
+### Phase 8: Targeted Re-Synthesis
+
+The system uses three re-synthesis strategies based on the type of failure detected:
+
+```mermaid
+flowchart TD
+    A[Synthesis Complete] --> B{PVR Check}
+    B -->|Contradictions| C[rerollContradictingSections]
+    B -->|No Contradictions| D{Challenge/Vote}
+    
+    D -->|Pass| E[Output Report]
+    D -->|Fail| F{Which sections failed?}
+    
+    F -->|'global' - cross-section issues| G[resynthesizeWithGaps]
+    F -->|'overview'/'q1'/etc - specific sections| H[rerollFailingSections]
+    
+    C --> D
+    G --> I{Re-roll limit?}
+    H --> I
+    
+    I -->|< 1 attempt| D
+    I -->|>= 1 attempt| E
+```
+
+| Function | Trigger | Strategy | Context Injection |
+|----------|---------|----------|-------------------|
+| `resynthesizeWithGaps` | `'global'` in failingSections (PVR cross-section only) | Full re-synthesis | Appends gap descriptions to entire context |
+| `rerollContradictingSections` | PVR detects contradictions | Targeted re-roll | Injects manifest facts + contradiction details |
+| `rerollFailingSections` | `'overview'`/`'q1'`/etc in failingSections | Targeted re-roll | Injects categorized critique details per section |
+
+**Design Rationale:**
+- **`'global'` is rare**: Only used for true cross-section contradictions detected by PVR, NOT for spread issues
+- **Spread issues → targeted re-roll**: When 6 MAJOR issues are spread (e.g., 2 per section), all sections with MAJOR issues get re-rolled
+- **`'overview'` = targeted overview re-roll**: Re-generates only the overview, keeping sub-questions as reference
+- **`'q1'`/`'q2'`/etc = targeted sub-question re-roll**: Uses overview as anchor, re-generates only failing sub-questions
+- **1 re-roll limit**: Prevents infinite loops while allowing one correction attempt
+
+**HCSP Thresholds (Per-Section):**
+- 1+ CRITICAL issues → Section fails
+- 3+ MAJOR issues → Section fails
+- Otherwise → Section passes
+
+**Quality Control Mechanisms (R-235913):**
+
+| Mechanism | Problem Solved | Implementation |
+|-----------|----------------|----------------|
+| **Convergence Criteria** | Re-rolls introducing new issues | Track MAJOR count before/after; revert if degraded |
+| **Minimal Localized Edits** | Rewrites introducing new problems | Prompt LLM to fix ONLY specific critique, not rewrite |
+| **Differential Validation** | Unchanged sections getting new critiques | Cache verdicts; only re-challenge re-rolled sections |
+| **Median Aggregation** | Model outliers (gpt-5-nano finds 9x more MAJORs) | Use median instead of sum for vote counts |
+
+```mermaid
+flowchart TD
+    A[Initial Synthesis] --> B[Challenge ALL sections]
+    B --> C[Store critiques per-section]
+    C --> D{Any failing sections?}
+    
+    D -->|No| E[Output Report]
+    D -->|Yes, specific| F[Minimal Edit Re-roll]
+    D -->|Yes, global| G[Full Re-synthesis]
+    
+    F --> H[Re-challenge ONLY re-rolled sections]
+    G --> I[Re-challenge ALL sections]
+    
+    H --> J[Merge with cached verdicts]
+    J --> K{MAJOR count decreased?}
+    I --> K
+    
+    K -->|Yes| L{Re-roll limit reached?}
+    K -->|No - Quality degraded| M[REVERT to previous version]
+    
+    L -->|No| D
+    L -->|Yes| E
+    M --> E
+```
+
+**Files:** `src/controller.ts` (resynthesizeWithGaps, rerollContradictingSections, rerollFailingSections)
+
 ### Research-Backed Implementation
 
 The system implements validated techniques from recent AI research:
@@ -181,6 +259,45 @@ interface Section {
 
 ## Data Flow
 
+```mermaid
+flowchart TB
+    subgraph Planning["1. Planning"]
+        P1[Query Input] --> P2[2-5 LLMs Vote]
+        P2 --> P3[Judge Selects Best Plan]
+    end
+    
+    subgraph Execution["2. Parallel Execution"]
+        E1[Perplexity Web Search]
+        E2[arXiv Papers]
+        E3[Context7 Docs]
+        E4[Sub-Questions]
+    end
+    
+    subgraph Synthesis["3-4. Manifest + Synthesis"]
+        S1[Extract Global Manifest] --> S2[Main Query Synthesis]
+        S2 --> S3[Key Findings Extraction]
+        S3 --> S4[Sub-Question Synthesis]
+    end
+    
+    subgraph Verification["5-7. Verification Loop"]
+        V1{PVR Check} -->|Contradictions| V2[rerollContradictingSections]
+        V1 -->|Pass| V3[Challenge + Vote]
+        V2 --> V3
+        V3 -->|Fail: Overview| V4[resynthesizeWithGaps]
+        V3 -->|Fail: Sub-Qs only| V5[rerollFailingSections]
+        V4 --> V6{Re-roll limit?}
+        V5 --> V6
+        V6 -->|No| V3
+        V6 -->|Yes| V7[Output]
+        V3 -->|Pass| V7
+    end
+    
+    Planning --> Execution
+    Execution --> Synthesis
+    Synthesis --> Verification
+```
+
+**Detailed ASCII Flow:**
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Research Controller                          │
@@ -205,14 +322,17 @@ interface Section {
 │  5. PVR Verification                                                 │
 │     ├─> Extract claims                                              │
 │     ├─> Cross-sectional NLI                                         │
-│     └─> Re-roll if score < 0.85                                     │
+│     └─> rerollContradictingSections if score < 0.85                 │
 │                                                                      │
 │  6. Code Validation                                                  │
 │     └─> Check against Context7 docs                                 │
 │                                                                      │
 │  7. Challenge + Vote                                                 │
-│     ├─> Critical challenge                                          │
-│     └─> Sufficiency vote                                            │
+│     ├─> Critical challenge (section-attributed critiques)           │
+│     ├─> Sufficiency vote (HCSP thresholds per section)              │
+│     └─> Re-synthesis decision:                                      │
+│         ├─> 'global' fails    → resynthesizeWithGaps (full)         │
+│         └─> sections fail     → rerollFailingSections (targeted)    │
 │                                                                      │
 │  8. Output                                                           │
 │     └─> Sectioned markdown + executive summary                      │
@@ -245,5 +365,9 @@ interface Section {
 - [arxiv:2305.14251](https://arxiv.org/abs/2305.14251) - Cross-sectional NLI
 - [arxiv:2309.01431](https://arxiv.org/abs/2309.01431) - Timeout handling strategies
 - [arxiv:2303.16634](https://arxiv.org/abs/2303.16634) - G-Eval for LLM evaluation
+- R-220053 - Targeted re-synthesis research (section-level critique attribution)
+- R-224005 - HCSP 4-tier validation taxonomy (CRITICAL/MAJOR/MINOR/PEDANTIC)
+- R-235913 - Iterative LLM refinement (convergence criteria, minimal edits, differential validation)
+- R-000633 - Validation caching strategies (cache verdicts for unchanged sections)
 
 

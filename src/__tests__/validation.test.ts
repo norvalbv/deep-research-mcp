@@ -529,47 +529,64 @@ describe('Source Citation Validation', () => {
 });
 
 // ============================================================================
-// Challenge Response Parsing (Structural)
+// Challenge Response Parsing - Section Attribution Tests
 // ============================================================================
 
-/**
- * Parses challenge critique response - extracts FAILED markers
- */
-export function parseChallengeResponse(content: string): {
-  critiques: string[];
-  hasSignificantGaps: boolean;
-} {
-  const critiques: string[] = [];
-  
-  // Look for [FAILED:...] markers
-  const failedPattern = /\*?\*?\[FAILED[^\]]*\]\*?\*?\s*([^\n]+)/gi;
-  let match;
-  while ((match = failedPattern.exec(content)) !== null) {
-    critiques.push(match[0].trim());
-  }
-  
-  return {
-    critiques,
-    hasSignificantGaps: critiques.length > 0,
-  };
-}
+import { parseChallengeResponse, ChallengeCritique } from '../challenge-parser.js';
 
-describe('Challenge Response Parsing', () => {
-  it('extracts FAILED markers', () => {
-    const response = `
-**[FAILED: Code]** Missing implementation.
-**[FAILED: Specificity]** No numbers provided.
-`;
+describe('Challenge Response Parsing - Section Attribution', () => {
+  it('preserves section attribution from structured JSON', () => {
+    const response = `\`\`\`json
+{
+  "pass": false,
+  "critiques": [
+    { "section": "q1", "issue": "Missing evidence for claim X" },
+    { "section": "q2", "issue": "Contradicts overview" },
+    { "section": "overview", "issue": "Does not answer main query" }
+  ]
+}
+\`\`\``;
     const result = parseChallengeResponse(response);
-    expect(result.critiques).toHaveLength(2);
+    
     expect(result.hasSignificantGaps).toBe(true);
+    expect(result.critiques).toHaveLength(3);
+    
+    // Verify section attribution preserved
+    expect(result.critiques[0]).toEqual({ section: 'q1', issue: 'Missing evidence for claim X' });
+    expect(result.critiques[1]).toEqual({ section: 'q2', issue: 'Contradicts overview' });
+    expect(result.critiques[2]).toEqual({ section: 'overview', issue: 'Does not answer main query' });
   });
 
-  it('returns empty for no failures', () => {
-    const response = 'Everything looks good. No issues found.';
+  it('defaults to overview section for critiques without section', () => {
+    const response = `{
+      "pass": false,
+      "critiques": [
+        { "issue": "Some problem without section" },
+        { "section": "q3", "issue": "Specific problem in q3" }
+      ]
+    }`;
     const result = parseChallengeResponse(response);
-    expect(result.critiques).toHaveLength(0);
+    
+    expect(result.critiques[0]).toEqual({ section: 'overview', issue: 'Some problem without section' });
+    expect(result.critiques[1]).toEqual({ section: 'q3', issue: 'Specific problem in q3' });
+  });
+
+  it('returns pass=true with empty critiques', () => {
+    const response = `{ "pass": true, "critiques": [] }`;
+    const result = parseChallengeResponse(response);
+    
     expect(result.hasSignificantGaps).toBe(false);
+    expect(result.critiques).toHaveLength(0);
+  });
+
+  it('handles malformed JSON gracefully (fail-safe)', () => {
+    const response = `This is not JSON at all, just text explaining issues`;
+    const result = parseChallengeResponse(response);
+    
+    // Should treat unparseable as having gaps
+    expect(result.hasSignificantGaps).toBe(true);
+    expect(result.critiques.length).toBeGreaterThan(0);
+    expect(result.critiques[0].section).toBe('overview');
   });
 });
 
