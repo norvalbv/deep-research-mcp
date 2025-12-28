@@ -9,7 +9,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { extractCitations, parseSections, extractCodeBlocks } from '../synthesis.test.js';
-import { parseVoteResponse, aggregateVotesHCSP, validateSourceCitations } from '../validation.test.js';
+import { aggregateVotesHCSP } from '../../validation.js';
+import { validateSourceCitations } from '../validation.test.js';
 
 // ============================================================================
 // Mock Research Output
@@ -102,66 +103,26 @@ describe('Source Validation', () => {
 
 describe('Vote Pipeline (HCSP)', () => {
   it('parses and aggregates votes correctly with HCSP', () => {
-    // HCSP votes with critiques array
     const votes = [
-      { 
-        model: 'model-0', 
-        vote: 'synthesis_wins' as const, 
-        reasoning: 'Good',
-        critiques: [],
-        hasCriticalGap: false,
-      },
-      { 
-        model: 'model-1', 
-        vote: 'synthesis_wins' as const, 
-        reasoning: 'OK',
-        critiques: [{ type: 'STYLISTIC_PREFERENCE' as const, issue: 'Minor wording' }],
-        hasCriticalGap: false,
-      },
-      { 
-        model: 'model-2', 
-        vote: 'synthesis_wins' as const, 
-        reasoning: 'Fine',
-        critiques: [],
-        hasCriticalGap: false,
-      },
+      { model: 'm1', vote: 'synthesis_wins' as const, reasoning: 'ok', critiques: [], counts: { critical: 0, major: 0, minor: 0, pedantic: 0 }, hasCriticalGap: false },
+      { model: 'm2', vote: 'synthesis_wins' as const, reasoning: 'ok', critiques: [{ category: 'PEDANTIC' as const, section: 'overview', issue: 'Minor wording' }], counts: { critical: 0, major: 0, minor: 0, pedantic: 1 }, hasCriticalGap: false },
+      { model: 'm3', vote: 'synthesis_wins' as const, reasoning: 'ok', critiques: [], counts: { critical: 0, major: 0, minor: 0, pedantic: 0 }, hasCriticalGap: false },
     ];
-    
+
     const result = aggregateVotesHCSP(votes);
-    
-    expect(result.synthesisWins).toBe(3);
-    expect(result.critiqueWins).toBe(0);
     expect(result.sufficient).toBe(true);
     expect(result.hasCriticalGap).toBe(false);
+    expect(result.stylisticPreferences).toContain('Minor wording');
   });
 
   it('fails when critical gap exists despite majority synthesis wins', () => {
     const votes = [
-      { 
-        model: 'm1', 
-        vote: 'synthesis_wins' as const, 
-        reasoning: 'Good overall',
-        critiques: [{ type: 'CRITICAL_GAP' as const, issue: 'Missing implementation' }],
-        hasCriticalGap: true,
-      },
-      { 
-        model: 'm2', 
-        vote: 'synthesis_wins' as const, 
-        reasoning: 'OK',
-        critiques: [],
-        hasCriticalGap: false,
-      },
-      { 
-        model: 'm3', 
-        vote: 'synthesis_wins' as const, 
-        reasoning: 'Adequate',
-        critiques: [],
-        hasCriticalGap: false,
-      },
+      { model: 'm1', vote: 'synthesis_wins' as const, reasoning: 'ok', critiques: [{ category: 'CRITICAL' as const, section: 'overview', issue: 'Missing implementation' }], counts: { critical: 1, major: 0, minor: 0, pedantic: 0 }, hasCriticalGap: true },
+      { model: 'm2', vote: 'synthesis_wins' as const, reasoning: 'ok', critiques: [], counts: { critical: 0, major: 0, minor: 0, pedantic: 0 }, hasCriticalGap: false },
+      { model: 'm3', vote: 'synthesis_wins' as const, reasoning: 'ok', critiques: [], counts: { critical: 0, major: 0, minor: 0, pedantic: 0 }, hasCriticalGap: false },
     ];
-    
+
     const result = aggregateVotesHCSP(votes);
-    // HCSP: Critical gap overrides vote count
     expect(result.sufficient).toBe(false);
     expect(result.hasCriticalGap).toBe(true);
     expect(result.criticalGaps).toContain('Missing implementation');
@@ -169,32 +130,14 @@ describe('Vote Pipeline (HCSP)', () => {
 
   it('handles all critique wins with critical gaps', () => {
     const votes = [
-      { 
-        model: 'm1', 
-        vote: 'critique_wins' as const, 
-        reasoning: 'Bad',
-        critiques: [{ type: 'CRITICAL_GAP' as const, issue: 'A' }],
-        hasCriticalGap: true,
-      },
-      { 
-        model: 'm2', 
-        vote: 'critique_wins' as const, 
-        reasoning: 'Bad',
-        critiques: [{ type: 'CRITICAL_GAP' as const, issue: 'B' }],
-        hasCriticalGap: true,
-      },
-      { 
-        model: 'm3', 
-        vote: 'critique_wins' as const, 
-        reasoning: 'Bad',
-        critiques: [{ type: 'CRITICAL_GAP' as const, issue: 'C' }],
-        hasCriticalGap: true,
-      },
+      { model: 'm1', vote: 'critique_wins' as const, reasoning: 'bad', critiques: [{ category: 'CRITICAL' as const, section: 'overview', issue: 'A' }], counts: { critical: 1, major: 0, minor: 0, pedantic: 0 }, hasCriticalGap: true },
+      { model: 'm2', vote: 'critique_wins' as const, reasoning: 'bad', critiques: [{ category: 'CRITICAL' as const, section: 'overview', issue: 'B' }], counts: { critical: 1, major: 0, minor: 0, pedantic: 0 }, hasCriticalGap: true },
+      { model: 'm3', vote: 'critique_wins' as const, reasoning: 'bad', critiques: [{ category: 'CRITICAL' as const, section: 'overview', issue: 'C' }], counts: { critical: 1, major: 0, minor: 0, pedantic: 0 }, hasCriticalGap: true },
     ];
     
     const result = aggregateVotesHCSP(votes);
     expect(result.sufficient).toBe(false);
-    expect(result.criticalGaps).toHaveLength(3);
     expect(result.hasCriticalGap).toBe(true);
+    expect(result.criticalGaps).toHaveLength(3);
   });
 });

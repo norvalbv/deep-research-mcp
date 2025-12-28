@@ -445,151 +445,7 @@ export async function runSufficiencyVote(
     };
   }
 
-  // 4-tier category aggregation using MEDIAN to handle outliers (R-235913:q4)
-  // Rationale: If gpt-5-nano reports 9 MAJOR but others report 0-1, median gives stable result
-  const getMedian = (values: number[]): number => {
-    if (values.length === 0) return 0;
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 ? sorted[mid] : Math.ceil((sorted[mid - 1] + sorted[mid]) / 2);
-  };
-  
-  // Collect per-model counts for median calculation
-  const perModelCounts = validVotes.map(v => v.counts);
-  
-  const aggregatedCounts: CritiqueCounts = {
-    critical: getMedian(perModelCounts.map(c => c.critical)),
-    major: getMedian(perModelCounts.map(c => c.major)),
-    minor: getMedian(perModelCounts.map(c => c.minor)),
-    pedantic: getMedian(perModelCounts.map(c => c.pedantic)),
-  };
-  
-  // Log outlier detection for debugging
-  const maxMajor = Math.max(...perModelCounts.map(c => c.major));
-  const minMajor = Math.min(...perModelCounts.map(c => c.major));
-  if (maxMajor - minMajor > 3) {
-    console.error(`[Vote] Outlier detected: MAJOR counts range from ${minMajor} to ${maxMajor}, using median ${aggregatedCounts.major}`);
-  }
-  
-  const allCriticalIssues: string[] = [];
-  const allMajorIssues: string[] = [];
-  const allMinorIssues: string[] = [];
-  const allPedanticIssues: string[] = [];
-  
-  for (const vote of validVotes) {
-    // Collect issues by category
-    for (const critique of vote.critiques) {
-      switch (critique.category) {
-        case 'CRITICAL':
-          allCriticalIssues.push(critique.issue);
-          break;
-        case 'MAJOR':
-          allMajorIssues.push(critique.issue);
-          break;
-        case 'MINOR':
-          allMinorIssues.push(critique.issue);
-          break;
-        case 'PEDANTIC':
-          allPedanticIssues.push(critique.issue);
-          break;
-      }
-    }
-  }
-
-  // Deduplicate issues
-  const uniqueCriticalIssues = [...new Set(allCriticalIssues)];
-  const uniqueMajorIssues = [...new Set(allMajorIssues)];
-  const uniqueMinorIssues = [...new Set(allMinorIssues)];
-  const uniquePedanticIssues = [...new Set(allPedanticIssues)];
-  
-  // Collect all critiques with section attribution for per-section analysis
-  const allCritiques: CategorizedCritique[] = validVotes.flatMap(v => v.critiques);
-  
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:407',message:'H1: All critiques from votes',data:{count:allCritiques.length,samples:allCritiques.slice(0,5).map(c=>({section:c.section,category:c.category,issue:c.issue.slice(0,50)}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-  // #endregion
-  
-  // Group critiques by section and apply thresholds per-section (R-220053)
-  const critiquesBySection: Record<string, CategorizedCritique[]> = {};
-  for (const critique of allCritiques) {
-    const section = critique.section || 'overview';
-    if (!critiquesBySection[section]) critiquesBySection[section] = [];
-    critiquesBySection[section].push(critique);
-  }
-  
-  // #region agent log
-  const sectionSummary = Object.entries(critiquesBySection).map(([s,cs])=>({section:s,count:cs.length,major:cs.filter(c=>c.category==='MAJOR').length,critical:cs.filter(c=>c.category==='CRITICAL').length}));
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:418',message:'H4: Per-section grouping',data:{sections:Object.keys(critiquesBySection),sectionSummary},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
-  // #endregion
-  
-  // Calculate failing sections (1+ CRITICAL or 3+ MAJOR in that section)
-  const failingSections: string[] = [];
-  for (const [section, critiques] of Object.entries(critiquesBySection)) {
-    const sectionCounts = { critical: 0, major: 0 };
-    for (const c of critiques) {
-      if (c.category === 'CRITICAL') sectionCounts.critical++;
-      else if (c.category === 'MAJOR') sectionCounts.major++;
-    }
-    if (sectionCounts.critical >= 1 || sectionCounts.major >= 3) {
-      failingSections.push(section);
-    }
-  }
-  
-  // Research-backed threshold rules (R-224005):
-  // - 1+ CRITICAL → fail
-  // - 3+ MAJOR with 0 CRITICAL → fail
-  // - Otherwise → pass
-  const hasCriticalGap = aggregatedCounts.critical > 0 || uniqueCriticalIssues.length > 0;
-  const hasTooManyMajor = aggregatedCounts.major >= 3 && !hasCriticalGap;
-  
-  // Apply threshold-based decision (R-224005)
-  const sufficient = !(hasCriticalGap || hasTooManyMajor);
-  
-  // If global threshold fails but no per-section fails, add sections with ANY MAJOR issues
-  // This enables targeted re-roll of problematic sections rather than full re-synthesis
-  // 'global' is ONLY used for true cross-section contradictions (e.g., PVR failures)
-  if (!sufficient && failingSections.length === 0) {
-    // Find all sections with at least 1 MAJOR issue
-    for (const [section, critiques] of Object.entries(critiquesBySection)) {
-      const majorCount = critiques.filter(c => c.category === 'MAJOR').length;
-      if (majorCount > 0) {
-        failingSections.push(section);
-      }
-    }
-  }
-  
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:450',message:'H2: Final failingSections',data:{failingSections,sufficient,hasCriticalGap,hasTooManyMajor,globalMajor:aggregatedCounts.major},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2-FIX'})}).catch(()=>{});
-  // #endregion
-
-  console.error(`[Vote] Issue Counts - Critical: ${aggregatedCounts.critical}, Major: ${aggregatedCounts.major}, Minor: ${aggregatedCounts.minor}, Pedantic: ${aggregatedCounts.pedantic}`);
-  if (failingSections.length > 0) {
-    console.error(`[Vote] Failing sections: ${failingSections.join(', ')}`);
-  }
-  
-  // Build the list of gaps that caused failure (for re-synthesis trigger)
-  // Include MAJOR issues when they caused the failure (3+ MAJOR with 0 CRITICAL)
-  let failureGaps: string[] = [];
-  
-  if (hasCriticalGap) {
-    failureGaps = uniqueCriticalIssues;
-    console.error(`[Vote] CRITICAL issues detected (${uniqueCriticalIssues.length}): ${uniqueCriticalIssues.slice(0, 3).join('; ')}`);
-  } else if (hasTooManyMajor) {
-    // Include MAJOR issues in criticalGaps so re-synthesis triggers
-    failureGaps = uniqueMajorIssues.slice(0, 5); // Limit to top 5 to focus re-synthesis
-    console.error(`[Vote] Too many MAJOR issues (${aggregatedCounts.major} >= 3): ${uniqueMajorIssues.slice(0, 3).join('; ')}`);
-  } else {
-    console.error(`[Vote] Synthesis passes - only Minor/Pedantic issues`);
-  }
-
-  return {
-    sufficient,
-    criticalGaps: failureGaps, // Contains issues that caused failure (CRITICAL or excess MAJOR)
-    stylisticPreferences: [...uniqueMinorIssues, ...uniquePedanticIssues], // Group Minor+Pedantic as non-blocking
-    hasCriticalGap: hasCriticalGap || hasTooManyMajor, // True if ANY blocking issues exist
-    failingSections, // Sections that exceed thresholds (for targeted re-synthesis)
-    details: validVotes.map(v => ({ model: v.model, reasoning: v.reasoning, critiques: v.critiques })),
-  };
+  return aggregateVotesHCSP(validVotes);
 }
 
 /**
@@ -611,10 +467,6 @@ function buildVotePrompt(
   const critiquePoints = challenge.critiques.length > 0
     ? challenge.critiques.map((c, i) => `${i + 1}. [${c.section}] ${c.issue}`).join('\n')
     : challenge.rawResponse;
-
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:buildVotePrompt',message:'H1: Critique points sent to vote LLMs',data:{critiqueCount:challenge.critiques.length,uniqueSections:[...new Set(challenge.critiques.map(c=>c.section))],samplePoints:critiquePoints.split('\n').slice(0,3)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
-  // #endregion
 
   // Build valid citation sources section
   const citationFormatsSection = `**VALID CITATION FORMATS (NOT hallucinations):**
@@ -751,7 +603,7 @@ export interface ParsedVote {
 /**
  * Parse vote response into structured result with 4-tier categorization (R-224005)
  */
-function parseVoteResponse(
+export function parseVoteResponse(
   response: string, 
   model: string
 ): ParsedVote {
@@ -799,11 +651,6 @@ function parseVoteResponse(
       }
     }
     
-    // #region agent log
-    const selfReported = parsed.counts || {};
-    fetch('http://127.0.0.1:7243/ingest/cc739506-e25d-45e2-b543-cb8ae30e3ecd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'validation.ts:parseVoteResponse',message:'FIX: Counts comparison',data:{model,actualCounts:counts,selfReported,uniqueSections:[...new Set(critiques.map(c=>c.section))]},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'FIX'})}).catch(()=>{});
-    // #endregion
-    
     // NOTE: Do NOT use parsed.counts - LLM self-reported counts often don't match actual critiques
     // We calculated counts above from the actual critique array, which is accurate
     
@@ -847,6 +694,148 @@ function parseVoteResponse(
       hasCriticalGap: false,
     };
   }
+}
+
+/**
+ * Aggregate HCSP votes into a sufficiency decision (pure, deterministic).
+ *
+ * This is the core of the sufficiency decision logic used by runSufficiencyVote,
+ * extracted to enable deterministic unit/integration tests without LLM calls.
+ *
+ * Threshold rules (R-224005):
+ * - 1+ CRITICAL issues → fail
+ * - 3+ MAJOR issues (with 0 CRITICAL) → fail
+ * - Otherwise (Minor/Pedantic only) → pass
+ */
+export function aggregateVotesHCSP(validVotes: ParsedVote[]): SufficiencyVote {
+  // No votes = assume pass (nothing to critique)
+  if (validVotes.length === 0) {
+    return {
+      sufficient: true,
+      criticalGaps: [],
+      stylisticPreferences: [],
+      hasCriticalGap: false,
+      failingSections: [],
+      details: [],
+    };
+  }
+
+  // 4-tier category aggregation using MEDIAN to handle outliers (R-235913:q4)
+  // Rationale: If one model reports extreme counts, median gives stable result
+  const getMedian = (values: number[]): number => {
+    if (values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : Math.ceil((sorted[mid - 1] + sorted[mid]) / 2);
+  };
+
+  const perModelCounts = validVotes.map(v => v.counts);
+
+  const aggregatedCounts: CritiqueCounts = {
+    critical: getMedian(perModelCounts.map(c => c.critical)),
+    major: getMedian(perModelCounts.map(c => c.major)),
+    minor: getMedian(perModelCounts.map(c => c.minor)),
+    pedantic: getMedian(perModelCounts.map(c => c.pedantic)),
+  };
+
+  // Log outlier detection for debugging
+  const maxMajor = Math.max(...perModelCounts.map(c => c.major));
+  const minMajor = Math.min(...perModelCounts.map(c => c.major));
+  if (maxMajor - minMajor > 3) {
+    console.error(`[Vote] Outlier detected: MAJOR counts range from ${minMajor} to ${maxMajor}, using median ${aggregatedCounts.major}`);
+  }
+
+  const allCriticalIssues: string[] = [];
+  const allMajorIssues: string[] = [];
+  const allMinorIssues: string[] = [];
+  const allPedanticIssues: string[] = [];
+
+  for (const vote of validVotes) {
+    for (const critique of vote.critiques) {
+      switch (critique.category) {
+        case 'CRITICAL':
+          allCriticalIssues.push(critique.issue);
+          break;
+        case 'MAJOR':
+          allMajorIssues.push(critique.issue);
+          break;
+        case 'MINOR':
+          allMinorIssues.push(critique.issue);
+          break;
+        case 'PEDANTIC':
+          allPedanticIssues.push(critique.issue);
+          break;
+      }
+    }
+  }
+
+  // Deduplicate issues
+  const uniqueCriticalIssues = [...new Set(allCriticalIssues)];
+  const uniqueMajorIssues = [...new Set(allMajorIssues)];
+  const uniqueMinorIssues = [...new Set(allMinorIssues)];
+  const uniquePedanticIssues = [...new Set(allPedanticIssues)];
+
+  // Group critiques by section and apply thresholds per-section (R-220053)
+  const allCritiques: CategorizedCritique[] = validVotes.flatMap(v => v.critiques);
+  const critiquesBySection: Record<string, CategorizedCritique[]> = {};
+  for (const critique of allCritiques) {
+    const section = critique.section || 'overview';
+    if (!critiquesBySection[section]) critiquesBySection[section] = [];
+    critiquesBySection[section].push(critique);
+  }
+
+  // Calculate failing sections (1+ CRITICAL or 3+ MAJOR in that section)
+  const failingSections: string[] = [];
+  for (const [section, critiques] of Object.entries(critiquesBySection)) {
+    const sectionCounts = { critical: 0, major: 0 };
+    for (const c of critiques) {
+      if (c.category === 'CRITICAL') sectionCounts.critical++;
+      else if (c.category === 'MAJOR') sectionCounts.major++;
+    }
+    if (sectionCounts.critical >= 1 || sectionCounts.major >= 3) {
+      failingSections.push(section);
+    }
+  }
+
+  // Research-backed threshold rules (R-224005)
+  const hasCriticalGap = aggregatedCounts.critical > 0 || uniqueCriticalIssues.length > 0;
+  const hasTooManyMajor = aggregatedCounts.major >= 3 && !hasCriticalGap;
+
+  const sufficient = !(hasCriticalGap || hasTooManyMajor);
+
+  // If global threshold fails but no per-section fails, add sections with ANY MAJOR issues
+  if (!sufficient && failingSections.length === 0) {
+    for (const [section, critiques] of Object.entries(critiquesBySection)) {
+      const majorCount = critiques.filter(c => c.category === 'MAJOR').length;
+      if (majorCount > 0) failingSections.push(section);
+    }
+  }
+
+  console.error(`[Vote] Issue Counts - Critical: ${aggregatedCounts.critical}, Major: ${aggregatedCounts.major}, Minor: ${aggregatedCounts.minor}, Pedantic: ${aggregatedCounts.pedantic}`);
+  if (failingSections.length > 0) {
+    console.error(`[Vote] Failing sections: ${failingSections.join(', ')}`);
+  }
+
+  // Build the list of gaps that caused failure
+  let failureGaps: string[] = [];
+  if (hasCriticalGap) {
+    failureGaps = uniqueCriticalIssues;
+    console.error(`[Vote] CRITICAL issues detected (${uniqueCriticalIssues.length}): ${uniqueCriticalIssues.slice(0, 3).join('; ')}`);
+  } else if (hasTooManyMajor) {
+    failureGaps = uniqueMajorIssues.slice(0, 5);
+    console.error(`[Vote] Too many MAJOR issues (${aggregatedCounts.major} >= 3): ${uniqueMajorIssues.slice(0, 3).join('; ')}`);
+  } else {
+    console.error(`[Vote] Synthesis passes - only Minor/Pedantic issues`);
+  }
+
+  return {
+    sufficient,
+    criticalGaps: failureGaps,
+    stylisticPreferences: [...uniqueMinorIssues, ...uniquePedanticIssues],
+    hasCriticalGap: hasCriticalGap || hasTooManyMajor,
+    failingSections,
+    details: validVotes.map(v => ({ model: v.model, reasoning: v.reasoning, critiques: v.critiques })),
+  };
 }
 
 /**

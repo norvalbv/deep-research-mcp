@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { safeParseJSON } from '../validation.js';
+import { safeParseJSON, parseVoteResponse, aggregateVotesHCSP } from '../validation.js';
 
 // ============================================================================
 // safeParseJSON - Robust JSON Parsing for LLM Output
@@ -194,268 +194,132 @@ Let me know if you need more details.`;
 });
 
 // ============================================================================
-// Vote Response Parsing (Structural - parsing LLM JSON output)
+// Vote Parsing + Aggregation (REAL validation.ts implementation)
 // ============================================================================
 
-/**
- * Parses vote response from LLM - handles markdown-wrapped JSON
- */
-export function parseVoteResponse(response: string): {
-  vote: 'synthesis_wins' | 'critique_wins';
-  reasoning: string;
-  criticalGaps?: string[];
-} {
-  try {
-    // Extract JSON from markdown code blocks if present
-    const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
-    const contentToSearch = codeBlockMatch ? codeBlockMatch[1] : response;
-    
-    const jsonMatch = contentToSearch.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('No JSON found');
-    }
-    
-    const parsed = JSON.parse(jsonMatch[0]);
-    
-    return {
-      vote: parsed.vote === 'critique_wins' ? 'critique_wins' : 'synthesis_wins',
-      reasoning: parsed.reasoning || '',
-      criticalGaps: parsed.critical_gaps || parsed.criticalGaps || [],
-    };
-  } catch {
-    return { 
-      vote: 'synthesis_wins', 
-      reasoning: 'Parse failed, defaulting to synthesis_wins',
-      criticalGaps: [],
-    };
-  }
-}
-
-describe('Vote Response Parsing', () => {
-  it('parses plain JSON', () => {
-    const response = '{"vote": "synthesis_wins", "reasoning": "Good answer."}';
-    const result = parseVoteResponse(response);
-    expect(result.vote).toBe('synthesis_wins');
-    expect(result.reasoning).toContain('Good');
-  });
-
-  it('parses markdown-wrapped JSON', () => {
-    const response = `Here is my evaluation:
-
-\`\`\`json
+describe('parseVoteResponse (4-tier taxonomy)', () => {
+  it('parses JSON and normalizes categories + default section', () => {
+    const response = `\`\`\`json
 {
-  "vote": "critique_wins",
-  "reasoning": "Issues found.",
-  "critical_gaps": ["Gap 1", "Gap 2"]
+  "vote": "synthesis_wins",
+  "reasoning": "OK",
+  "critiques": [
+    {"category": "CRITICAL", "section": "overview", "issue": "Missing success criteria"},
+    {"category": "MAJOR", "section": "q1", "issue": "Incorrect threshold"},
+    {"category": "PEDANTIC", "issue": "Minor wording"}
+  ]
 }
-\`\`\`
-`;
-    const result = parseVoteResponse(response);
-    expect(result.vote).toBe('critique_wins');
-    expect(result.criticalGaps).toHaveLength(2);
+\`\`\``;
+
+    const parsed = parseVoteResponse(response, 'model-a');
+    expect(parsed.model).toBe('model-a');
+    expect(parsed.vote).toBe('critique_wins'); // 1+ CRITICAL forces critique_wins
+    expect(parsed.counts.critical).toBe(1);
+    expect(parsed.counts.major).toBe(1);
+    expect(parsed.counts.pedantic).toBe(1);
+    expect(parsed.critiques.find(c => c.issue === 'Minor wording')?.section).toBe('overview');
   });
 
-  it('handles code block without language tag', () => {
-    const response = '```\n{"vote": "synthesis_wins", "reasoning": "OK"}\n```';
-    const result = parseVoteResponse(response);
-    expect(result.vote).toBe('synthesis_wins');
-  });
-
-  it('defaults to synthesis_wins on invalid JSON', () => {
-    const response = 'Not valid JSON at all.';
-    const result = parseVoteResponse(response);
-    expect(result.vote).toBe('synthesis_wins');
-    expect(result.reasoning).toContain('Parse failed');
-  });
-
-  it('extracts critical_gaps correctly', () => {
-    const response = `{
-      "vote": "critique_wins",
-      "reasoning": "Problems",
-      "critical_gaps": ["Missing implementation", "Undefined variable"]
-    }`;
-    const result = parseVoteResponse(response);
-    expect(result.criticalGaps).toContain('Missing implementation');
+  it('defaults to synthesis_wins on parse failure', () => {
+    const parsed = parseVoteResponse('not json', 'model-b');
+    expect(parsed.vote).toBe('synthesis_wins');
+    expect(parsed.critiques).toHaveLength(0);
   });
 });
 
-// ============================================================================
-// HCSP Vote Aggregation (Hierarchical Constraint Satisfaction Protocol)
-// ============================================================================
+describe('aggregateVotesHCSP (threshold aggregation)', () => {
+  it('passes when only MINOR/PEDANTIC issues exist', () => {
+    const v1 = parseVoteResponse(
+      JSON.stringify({
+        vote: 'synthesis_wins',
+        reasoning: 'fine',
+        critiques: [{ category: 'MINOR', section: 'overview', issue: 'Could be more concise' }],
+      }),
+      'm1'
+    );
+    const v2 = parseVoteResponse(
+      JSON.stringify({
+        vote: 'synthesis_wins',
+        reasoning: 'fine',
+        critiques: [{ category: 'PEDANTIC', section: 'overview', issue: 'Typo' }],
+      }),
+      'm2'
+    );
 
-type CritiqueType = 'CRITICAL_GAP' | 'STYLISTIC_PREFERENCE';
-
-interface CategorizedCritique {
-  type: CritiqueType;
-  issue: string;
-}
-
-interface HCSPVoteDetail {
-  model: string;
-  vote: 'synthesis_wins' | 'critique_wins';
-  reasoning: string;
-  critiques: CategorizedCritique[];
-  hasCriticalGap: boolean;
-}
-
-/**
- * HCSP Vote Aggregation - Critical gaps override vote count
- * Rule: If ANY vote has a CRITICAL_GAP, synthesis fails
- */
-export function aggregateVotesHCSP(votes: HCSPVoteDetail[]): {
-  sufficient: boolean;
-  synthesisWins: number;
-  critiqueWins: number;
-  criticalGaps: string[];
-  stylisticPreferences: string[];
-  hasCriticalGap: boolean;
-} {
-  const synthesisWins = votes.filter(v => v.vote === 'synthesis_wins').length;
-  const critiqueWins = votes.filter(v => v.vote === 'critique_wins').length;
-  
-  // Separate critiques by type
-  const criticalGaps: string[] = [];
-  const stylisticPreferences: string[] = [];
-  
-  for (const vote of votes) {
-    for (const critique of vote.critiques) {
-      if (critique.type === 'CRITICAL_GAP') {
-        criticalGaps.push(critique.issue);
-      } else {
-        stylisticPreferences.push(critique.issue);
-      }
-    }
-  }
-  
-  // Deduplicate
-  const uniqueCriticalGaps = [...new Set(criticalGaps)];
-  const uniqueStylisticPreferences = [...new Set(stylisticPreferences)];
-  
-  // HCSP Rule: ANY critical gap = synthesis fails
-  const hasCriticalGap = uniqueCriticalGaps.length > 0 || votes.some(v => v.hasCriticalGap);
-  const sufficient = hasCriticalGap ? false : (synthesisWins >= critiqueWins);
-  
-  return {
-    sufficient,
-    synthesisWins,
-    critiqueWins,
-    criticalGaps: uniqueCriticalGaps,
-    stylisticPreferences: uniqueStylisticPreferences,
-    hasCriticalGap,
-  };
-}
-
-describe('HCSP Vote Aggregation', () => {
-  it('synthesis wins when all critiques are stylistic', () => {
-    const votes: HCSPVoteDetail[] = [
-      { 
-        model: 'm1', 
-        vote: 'synthesis_wins', 
-        reasoning: 'Good', 
-        critiques: [{ type: 'STYLISTIC_PREFERENCE', issue: 'Could be more formal' }],
-        hasCriticalGap: false,
-      },
-      { 
-        model: 'm2', 
-        vote: 'synthesis_wins', 
-        reasoning: 'OK', 
-        critiques: [],
-        hasCriticalGap: false,
-      },
-    ];
-    const result = aggregateVotesHCSP(votes);
+    const result = aggregateVotesHCSP([v1, v2]);
     expect(result.sufficient).toBe(true);
     expect(result.hasCriticalGap).toBe(false);
+    expect(result.criticalGaps).toHaveLength(0);
+    expect(result.stylisticPreferences).toContain('Could be more concise');
+    expect(result.stylisticPreferences).toContain('Typo');
   });
 
-  it('synthesis FAILS when ANY vote has CRITICAL_GAP (even if minority)', () => {
-    const votes: HCSPVoteDetail[] = [
-      { 
-        model: 'm1', 
-        vote: 'synthesis_wins', 
-        reasoning: 'Good overall', 
-        critiques: [],
-        hasCriticalGap: false,
-      },
-      { 
-        model: 'm2', 
-        vote: 'synthesis_wins', 
-        reasoning: 'Adequate', 
-        critiques: [],
-        hasCriticalGap: false,
-      },
-      { 
-        model: 'm3', 
-        vote: 'synthesis_wins',  // Even voted synthesis_wins!
-        reasoning: 'Minor issues', 
-        critiques: [{ type: 'CRITICAL_GAP', issue: 'Code has TODO placeholder' }],
-        hasCriticalGap: true,
-      },
-    ];
-    const result = aggregateVotesHCSP(votes);
-    // HCSP: Critical gap overrides the 3-0 vote
+  it('fails when any CRITICAL issue exists', () => {
+    const v1 = parseVoteResponse(
+      JSON.stringify({
+        vote: 'synthesis_wins',
+        reasoning: 'fine',
+        critiques: [{ category: 'CRITICAL', section: 'overview', issue: 'Missing executable code' }],
+      }),
+      'm1'
+    );
+    const v2 = parseVoteResponse(
+      JSON.stringify({ vote: 'synthesis_wins', reasoning: 'fine', critiques: [] }),
+      'm2'
+    );
+
+    const result = aggregateVotesHCSP([v1, v2]);
     expect(result.sufficient).toBe(false);
     expect(result.hasCriticalGap).toBe(true);
-    expect(result.criticalGaps).toContain('Code has TODO placeholder');
+    expect(result.criticalGaps).toContain('Missing executable code');
+    expect(result.failingSections).toContain('overview');
   });
 
-  it('separates CRITICAL_GAP from STYLISTIC_PREFERENCE', () => {
-    const votes: HCSPVoteDetail[] = [
-      { 
-        model: 'm1', 
-        vote: 'critique_wins', 
-        reasoning: 'Issues found', 
+  it('fails when 3+ MAJOR issues exist and no CRITICAL issues', () => {
+    const v1 = parseVoteResponse(
+      JSON.stringify({
+        vote: 'synthesis_wins',
+        reasoning: 'fine',
         critiques: [
-          { type: 'CRITICAL_GAP', issue: 'Missing success criteria' },
-          { type: 'STYLISTIC_PREFERENCE', issue: 'Verbose explanation' },
+          { category: 'MAJOR', section: 'q1', issue: 'Gap A' },
+          { category: 'MAJOR', section: 'q1', issue: 'Gap B' },
+          { category: 'MAJOR', section: 'q1', issue: 'Gap C' },
         ],
-        hasCriticalGap: true,
-      },
-      { 
-        model: 'm2', 
-        vote: 'critique_wins', 
-        reasoning: 'Problems', 
-        critiques: [
-          { type: 'CRITICAL_GAP', issue: 'Undefined threshold value' },
-          { type: 'CRITICAL_GAP', issue: 'Missing success criteria' }, // duplicate
-        ],
-        hasCriticalGap: true,
-      },
-    ];
-    const result = aggregateVotesHCSP(votes);
-    expect(result.sufficient).toBe(false);
-    expect(result.criticalGaps).toHaveLength(2); // deduped
-    expect(result.stylisticPreferences).toHaveLength(1);
-    expect(result.criticalGaps).toContain('Missing success criteria');
-    expect(result.criticalGaps).toContain('Undefined threshold value');
-  });
+      }),
+      'm1'
+    );
+    const v2 = parseVoteResponse(
+      JSON.stringify({ vote: 'synthesis_wins', reasoning: 'fine', critiques: [] }),
+      'm2'
+    );
+    const v3 = parseVoteResponse(
+      JSON.stringify({ vote: 'synthesis_wins', reasoning: 'fine', critiques: [] }),
+      'm3'
+    );
 
-  it('handles production quality test case from README', () => {
-    // Simulates the example from the user's report where critiques were dismissed
-    const votes: HCSPVoteDetail[] = [
-      { 
-        model: 'gemini-1', 
-        vote: 'synthesis_wins', 
-        reasoning: 'Conceptually answers the question', 
-        critiques: [
-          { type: 'CRITICAL_GAP', issue: '[FAILED: Success Criteria] No measurable goal defined' },
-          { type: 'CRITICAL_GAP', issue: '[FAILED: Code Completeness] Functions are hardcoded logic demos' },
-          { type: 'CRITICAL_GAP', issue: '[FAILED: Specificity] Salience 0.7 lacks derivation rubric' },
-        ],
-        hasCriticalGap: true,
-      },
-    ];
-    const result = aggregateVotesHCSP(votes);
-    // With HCSP, these CRITICAL_GAPs should cause failure
-    expect(result.sufficient).toBe(false);
-    expect(result.hasCriticalGap).toBe(true);
-    expect(result.criticalGaps).toHaveLength(3);
-  });
+    // Median MAJOR count across [3,0,0] => 0, so this should PASS.
+    // This test ensures we don't accidentally treat single-model spikes as failure.
+    const passResult = aggregateVotesHCSP([v1, v2, v3]);
+    expect(passResult.sufficient).toBe(true);
 
-  it('handles empty votes', () => {
-    const result = aggregateVotesHCSP([]);
-    expect(result.sufficient).toBe(true);
-    expect(result.hasCriticalGap).toBe(false);
+    // Make it a real majority signal: [3,3,0] median => 3 => FAIL.
+    const v4 = parseVoteResponse(
+      JSON.stringify({
+        vote: 'synthesis_wins',
+        reasoning: 'fine',
+        critiques: [
+          { category: 'MAJOR', section: 'q1', issue: 'Gap A' },
+          { category: 'MAJOR', section: 'q1', issue: 'Gap B' },
+          { category: 'MAJOR', section: 'q1', issue: 'Gap C' },
+        ],
+      }),
+      'm4'
+    );
+    const failResult = aggregateVotesHCSP([v1, v4, v2]);
+    expect(failResult.sufficient).toBe(false);
+    expect(failResult.hasCriticalGap).toBe(true); // hasCriticalGap is true when failure thresholds triggered
+    expect(failResult.failingSections).toContain('q1');
+    expect(failResult.criticalGaps.length).toBeGreaterThan(0);
   });
 });
 
