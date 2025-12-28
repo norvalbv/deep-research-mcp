@@ -286,10 +286,148 @@ export function detectLogicInconsistencies(_text: string): {
 }
 
 // ============================================================================
-// Citation Resolution Tests
+// Output Format Rendering Tests (Structural)
 // ============================================================================
 
-import { resolveCitations } from '../formatting.js';
+import { formatMarkdown, resolveCitations, ResearchResult } from '../formatting.js';
+
+// Create a minimal mock ResearchResult for testing formatMarkdown
+function createMockResult(overrides: Partial<ResearchResult> = {}): ResearchResult {
+  return {
+    query: 'Test query',
+    complexity: 2,
+    complexityReasoning: 'Test reasoning',
+    execution: {
+      perplexityResult: { content: 'test', sources: ['https://example.com'] },
+    },
+    synthesis: {
+      overview: 'This is the overview content.',
+      additionalInsights: 'Some additional insights.',
+    },
+    ...overrides,
+  } as ResearchResult;
+}
+
+describe('Output Format Rendering', () => {
+  describe('direct format', () => {
+    it('returns only the overview content with no wrapper', () => {
+      const result = createMockResult({ outputFormat: 'direct' });
+      const markdown = formatMarkdown(result);
+      
+      // Should be just the overview, nothing else
+      expect(markdown).toBe('This is the overview content.');
+      expect(markdown).not.toContain('# Research Results');
+      expect(markdown).not.toContain('## Overview');
+      expect(markdown).not.toContain('## Additional Insights');
+      expect(markdown).not.toContain('## Sources');
+    });
+
+    it('does not resolve citations in direct format', () => {
+      const result = createMockResult({
+        outputFormat: 'direct',
+        synthesis: { overview: 'Fact [1] here.' },
+      });
+      const markdown = formatMarkdown(result);
+      
+      // Citations should remain unresolved in direct mode
+      expect(markdown).toBe('Fact [1] here.');
+    });
+  });
+
+  describe('summary format', () => {
+    it('includes header, overview, and additional insights', () => {
+      const result = createMockResult({ outputFormat: 'summary' });
+      const markdown = formatMarkdown(result);
+      
+      expect(markdown).toContain('# Research Results: Test query');
+      expect(markdown).toContain('## Overview');
+      expect(markdown).toContain('This is the overview content.');
+      expect(markdown).toContain('## Additional Insights');
+    });
+
+    it('omits Sources and Validation sections', () => {
+      const result = createMockResult({ outputFormat: 'summary' });
+      const markdown = formatMarkdown(result);
+      
+      expect(markdown).not.toContain('## Sources');
+      expect(markdown).not.toContain('## Validation');
+      expect(markdown).not.toContain('## Academic Papers');
+    });
+
+    it('resolves citations in summary format', () => {
+      const result = createMockResult({
+        outputFormat: 'summary',
+        synthesis: { overview: 'Fact [1] here.' },
+      });
+      const markdown = formatMarkdown(result);
+      
+      // Citation should be resolved to link
+      expect(markdown).toContain('[example.com]');
+      expect(markdown).toContain('(https://example.com)');
+    });
+  });
+
+  describe('detailed format', () => {
+    it('includes all sections', () => {
+      const result = createMockResult({ outputFormat: 'detailed' });
+      const markdown = formatMarkdown(result);
+      
+      expect(markdown).toContain('# Research Results: Test query');
+      expect(markdown).toContain('## Overview');
+      expect(markdown).toContain('## Additional Insights');
+      expect(markdown).toContain('## Sources');
+    });
+
+    it('is the default when outputFormat is not specified', () => {
+      const result = createMockResult({ outputFormat: undefined });
+      const markdown = formatMarkdown(result);
+      
+      // Should behave like detailed (includes Sources)
+      expect(markdown).toContain('## Sources');
+    });
+  });
+
+  describe('sub-questions', () => {
+    it('renders sub-questions in non-direct formats', () => {
+      const result = createMockResult({
+        outputFormat: 'summary',
+        synthesis: {
+          overview: 'Overview.',
+          subQuestions: {
+            q1: { question: 'What is X?', answer: 'X is something.' },
+            q2: { question: 'Why Y?', answer: 'Because reasons.' },
+          },
+        },
+      });
+      const markdown = formatMarkdown(result);
+      
+      expect(markdown).toContain('## What is X?');
+      expect(markdown).toContain('X is something.');
+      expect(markdown).toContain('## Why Y?');
+      expect(markdown).toContain('Because reasons.');
+    });
+
+    it('does not include sub-questions in direct format', () => {
+      const result = createMockResult({
+        outputFormat: 'direct',
+        synthesis: {
+          overview: 'Just the overview.',
+          subQuestions: {
+            q1: { question: 'What is X?', answer: 'X is something.' },
+          },
+        },
+      });
+      const markdown = formatMarkdown(result);
+      
+      expect(markdown).toBe('Just the overview.');
+      expect(markdown).not.toContain('What is X?');
+    });
+  });
+});
+
+// ============================================================================
+// Citation Resolution Tests
+// ============================================================================
 
 describe('Citation Resolution', () => {
   const mockExecution = {

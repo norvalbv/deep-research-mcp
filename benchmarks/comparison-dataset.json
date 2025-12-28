@@ -853,6 +853,7 @@
     {
       "id": "if-01",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "Write exactly 3 bullet points about LLM evaluation, each starting with a different letter from A, B, C.",
       "goldStandard": {
         "answer": "- Accuracy metrics like F1 and exact match measure factual correctness\n- Benchmark diversity ensures models aren't overfitting to specific tasks\n- Calibration testing verifies model confidence aligns with actual correctness",
@@ -871,6 +872,7 @@
     {
       "id": "if-02",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "Explain RAG in exactly 50 words, no more, no less.",
       "goldStandard": {
         "answer": "Retrieval-Augmented Generation combines document retrieval with language model generation. The system first searches a knowledge base for relevant documents using embeddings or keyword matching. These retrieved passages are then provided as context to the language model, which generates responses grounded in the retrieved information, reducing hallucinations significantly.",
@@ -889,6 +891,7 @@
     {
       "id": "if-03",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "List 5 LLM providers in alphabetical order, formatted as a numbered list.",
       "goldStandard": {
         "answer": "1. Anthropic\n2. Cohere\n3. Google\n4. Meta\n5. OpenAI",
@@ -906,6 +909,7 @@
     {
       "id": "if-04",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "Provide a JSON object with exactly 3 keys: 'model', 'task', 'score' where score is between 0.8 and 0.95.",
       "goldStandard": {
         "answer": "{\"model\": \"gpt-4o\", \"task\": \"summarization\", \"score\": 0.87}",
@@ -926,6 +930,7 @@
     {
       "id": "if-05",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "Write a haiku (5-7-5 syllables) about machine learning.",
       "goldStandard": {
         "answer": "Data flows like streams\nNeural pathways learn and grow\nPatterns emerge clear",
@@ -944,6 +949,7 @@
     {
       "id": "if-06",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "Explain transformers without using the words 'attention', 'query', 'key', or 'value'.",
       "goldStandard": {
         "answer": "Transformers process sequences by allowing each position to gather relevant information from all other positions in parallel. They use learned weighting mechanisms that compute compatibility scores between elements. This enables capturing long-range dependencies efficiently, making them superior to recurrent approaches for many NLP tasks.",
@@ -963,6 +969,7 @@
     {
       "id": "if-07",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "Provide exactly 2 code examples: one in Python, one in JavaScript, each under 3 lines.",
       "goldStandard": {
         "answer": "Python:\n```python\nresult = [x**2 for x in range(10)]\n```\n\nJavaScript:\n```javascript\nconst result = [...Array(10)].map((_, i) => i ** 2);\n```",
@@ -982,6 +989,7 @@
     {
       "id": "if-08",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "Create a markdown table with 3 columns (Model, Context, Cost) and exactly 4 rows of data.",
       "goldStandard": {
         "answer": "| Model | Context | Cost |\n|-------|---------|------|\n| GPT-4 | 128K | $30/1M |\n| Claude 3 | 200K | $15/1M |\n| Gemini Pro | 1M | $7/1M |\n| Llama 3 | 8K | Free |",
@@ -1002,6 +1010,7 @@
     {
       "id": "if-09",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "Write a response where every sentence ends with a question mark, explaining embeddings.",
       "goldStandard": {
         "answer": "Have you wondered how text becomes numbers? Embeddings convert words into dense vectors in a high-dimensional space? Similar meanings cluster together, making semantic search possible? The model learns these representations during training on large text corpora?",
@@ -1019,6 +1028,7 @@
     {
       "id": "if-10",
       "category": "instruction_following",
+      "outputFormat": "direct",
       "query": "List pros and cons of fine-tuning, with exactly 3 pros and 3 cons, each one word only.",
       "goldStandard": {
         "answer": "Pros:\n1. Specialized\n2. Efficient\n3. Customized\n\nCons:\n1. Expensive\n2. Overfitting\n3. Maintenance",

@@ -148,15 +148,14 @@ Returns validated markdown report with:
         .describe('Approaches already ruled out and why. Example: ["Random template filling - creates unrealistic patterns", "Pure LLM generation - too simple"]'),
       
       output_format: z
-        .enum(['summary', 'detailed', 'actionable_steps'])
+        .enum(['summary', 'detailed', 'actionable_steps', 'direct'])
         .optional()
-        .describe('Preferred output format. "summary" for overview, "detailed" for comprehensive analysis, "actionable_steps" for implementation guide'),
+        .describe('Preferred output format. "summary" for overview, "detailed" for comprehensive analysis, "actionable_steps" for implementation guide, "direct" for answer-only output with no report wrapper (for strict formatting prompts)'),
       
       include_code_examples: z
         .boolean()
         .optional()
-        .default(false)
-        .describe('Request code snippets in the synthesis output. Only enable for software/programming research. Default: false (keeps reports focused on concepts/analysis for non-technical topics).'),
+        .describe('Request code snippets in the synthesis output. If omitted, the planning agent decides based on query context. Set explicitly to true/false to override.'),
       
       sub_questions: z
         .array(z.string())
@@ -263,7 +262,7 @@ Returns validated markdown report with:
         options: {
           subQuestions: sub_questions,
           constraints,
-          includeCodeExamples: include_code_examples ?? false,
+          includeCodeExamples: include_code_examples,  // undefined = let planner decide
           techStack: tech_stack,
           papersRead: papers_read,
           outputFormat: output_format,
@@ -885,15 +884,14 @@ server.registerTool(
         .describe('Approaches already ruled out and why. Example: ["Random template filling - creates unrealistic patterns", "Pure LLM generation - too simple"]'),
       
       output_format: z
-        .enum(['summary', 'detailed', 'actionable_steps'])
+        .enum(['summary', 'detailed', 'actionable_steps', 'direct'])
         .optional()
-        .describe('Preferred output format. "summary" for overview, "detailed" for comprehensive analysis, "actionable_steps" for implementation guide'),
+        .describe('Preferred output format. "summary" for overview, "detailed" for comprehensive analysis, "actionable_steps" for implementation guide, "direct" for answer-only output with no report wrapper (for strict formatting prompts)'),
       
       include_code_examples: z
         .boolean()
         .optional()
-        .default(false)
-        .describe('Request code snippets in the synthesis output. Only enable for software/programming research. Default: false (keeps reports focused on concepts/analysis for non-technical topics).'),
+        .describe('Request code snippets in the synthesis output. If omitted, the planning agent decides based on query context. Set explicitly to true/false to override.'),
       
       sub_questions: z
         .array(z.string())
@@ -922,7 +920,7 @@ server.registerTool(
       //   .describe('Return structured JSON for direct use with agent-chat send_message. When true, returns { summary, key_findings, recommendations, report_path } that can be passed directly to send_message(research_findings: ...). This ensures research findings are formatted correctly for panel discussions.'),
     },
   },
-  async (params: { query: string; project_description: string | undefined; current_state: string | undefined; problem_statement: string | undefined; constraints: string[] | undefined; domain: string | undefined; date_range: string | undefined; depth_level: number | undefined; papers_read: string[] | undefined; key_findings: string[] | undefined; rejected_approaches: string[] | undefined; output_format: 'summary' | 'detailed' | 'actionable_steps' | undefined; include_code_examples: boolean | undefined; sub_questions: string[] | undefined; tech_stack: string[] | undefined; existing_data_samples: string | undefined; target_metrics: string[] | undefined; }) => {
+  async (params: { query: string; project_description: string | undefined; current_state: string | undefined; problem_statement: string | undefined; constraints: string[] | undefined; domain: string | undefined; date_range: string | undefined; depth_level: number | undefined; papers_read: string[] | undefined; key_findings: string[] | undefined; rejected_approaches: string[] | undefined; output_format: 'summary' | 'detailed' | 'actionable_steps' | 'direct' | undefined; include_code_examples: boolean | undefined; sub_questions: string[] | undefined; tech_stack: string[] | undefined; existing_data_samples: string | undefined; target_metrics: string[] | undefined; }) => {
     const { query, project_description, current_state, problem_statement, constraints, domain, date_range, depth_level, papers_read, key_findings, rejected_approaches, output_format, include_code_examples, sub_questions, tech_stack, existing_data_samples, target_metrics } = params;
     const jobId = generateJobId();
     const job: ResearchJob = {

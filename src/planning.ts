@@ -8,6 +8,8 @@ export interface ResearchActionPlan {
   modelVotes: Array<{ model: string; complexity: number }>;
   toolsToUse: string[];
   toolsToSkip: string[];
+  includeCodeExamples?: boolean;  // Decided by planner if not explicitly set by user
+  outputFormat?: 'summary' | 'detailed' | 'actionable_steps' | 'direct';  // Decided by planner based on query constraints
 }
 
 interface PlanningProposal {
@@ -177,16 +179,25 @@ ${options?.subQuestions ? `## SUB-QUESTIONS\n${options.subQuestions.map((q, i) =
 3. **DO NOT OVER-ENGINEER**: "When was X published?" does NOT need code examples or academic papers
 ${options?.maxDepth ? `4. **HARD CAP**: User requested max depth ${options.maxDepth}. You MUST NOT exceed this. If query needs higher, return ${options.maxDepth} anyway.` : ''}
 
+## OUTPUT FORMAT DECISION
+Set "output_format" based on query requirements:
+- **"direct"**: Query requires SPECIFIC OUTPUT FORMAT (e.g., "list 3 items", "exactly 50 words", "one word each", "JSON only", "no prose", specific table structure). Output ONLY the answer, no report wrapper.
+- **"summary"**: Default for most queries. Brief overview with key findings.
+- **"detailed"**: Query explicitly asks for comprehensive/thorough analysis.
+- **"actionable_steps"**: Query asks for implementation guide or step-by-step instructions.
+
 ## OUTPUT FORMAT
 Return ONLY valid JSON, no explanation:
 {
   "complexity": 1-4,
   "reasoning": "One sentence explaining why this complexity level",
+  "output_format": "summary" | "detailed" | "actionable_steps" | "direct",
   "signals": {
     "is_single_fact": boolean,
     "needs_comparison": boolean,
     "needs_code": boolean,
-    "needs_academic_sources": boolean
+    "needs_academic_sources": boolean,
+    "has_strict_format_constraint": boolean
   },
   "steps": [
     {"tool": "perplexity", "description": "Search for X", "parallel": false}
@@ -195,7 +206,7 @@ Return ONLY valid JSON, no explanation:
 `.trim();
 }
 
-function parseActionPlan(response: string, maxDepth?: number): ResearchActionPlan {
+export function parseActionPlan(response: string, maxDepth?: number): ResearchActionPlan {
   // DEBUG: Log first 300 chars of response
   console.error(`[Planning] Raw response preview: ${response.slice(0, 300).replace(/\n/g, '\\n')}${maxDepth ? ` (max depth: ${maxDepth})` : ''}`);
   
@@ -293,7 +304,14 @@ function parseActionPlan(response: string, maxDepth?: number): ResearchActionPla
     filteredSteps = filteredSteps.filter(s => !s.includes('consensus') && !s.includes('arxiv'));
   }
   
-  const result = {
+  // Extract includeCodeExamples from signals.needs_code (planner decides if user didn't specify)
+  const includeCodeExamples = parsed.signals?.needs_code;
+  
+  // Extract outputFormat from planner decision (defaults to undefined = let user/controller decide)
+  const validFormats = ['summary', 'detailed', 'actionable_steps', 'direct'] as const;
+  const outputFormat = validFormats.includes(parsed.output_format) ? parsed.output_format : undefined;
+  
+  const result: ResearchActionPlan = {
     complexity,
     reasoning: maxDepth !== undefined && parsed.complexity > maxDepth 
       ? `${parsed.reasoning || 'No reasoning provided'} (capped from ${parsed.complexity} to ${maxDepth})`
@@ -302,9 +320,11 @@ function parseActionPlan(response: string, maxDepth?: number): ResearchActionPla
     modelVotes: [],
     toolsToUse: filteredSteps,
     toolsToSkip: parsed.toolsToSkip || [],
+    includeCodeExamples,
+    outputFormat,
   };
   
-  console.error(`[Planning] Parsed plan: complexity=${result.complexity}, steps=${result.steps.join(', ')}${maxDepth ? ` (max: ${maxDepth})` : ''}`);
+  console.error(`[Planning] Parsed plan: complexity=${result.complexity}, steps=${result.steps.join(', ')}, code=${includeCodeExamples}, format=${outputFormat || 'default'}${maxDepth ? ` (max: ${maxDepth})` : ''}`);
   return result;
 }
 

@@ -28,7 +28,7 @@ export interface ResearchOptions {
   includeCodeExamples?: boolean;
   techStack?: string[];
   papersRead?: string[];
-  outputFormat?: 'summary' | 'detailed' | 'actionable_steps';
+  outputFormat?: 'summary' | 'detailed' | 'actionable_steps' | 'direct';
 }
 
 interface Context7Wrapper { client: Client; close: () => Promise<void>; }
@@ -56,7 +56,7 @@ export class ResearchController {
   async execute({ query, enrichedContext, depthLevel, options, onProgress }: { 
     query: string; 
     enrichedContext: string; 
-    depthLevel: ComplexityLevel; 
+    depthLevel?: ComplexityLevel; 
     options?: ResearchOptions;
     onProgress?: OnProgressCallback;
   }): Promise<{ 
@@ -86,7 +86,19 @@ export class ResearchController {
     emitProgress('Planning', 85);
     const actionPlan = await this.getActionPlan(query, enrichedContext, depthLevel, options);
     const complexity = (depthLevel || actionPlan.complexity) as ComplexityLevel;
-    console.error(`[Research] Plan: ${complexity}/4, ${actionPlan.steps.join(', ')}`);
+    
+    // Resolve includeCodeExamples: explicit user value > plan decision > false
+    const resolvedIncludeCode = options?.includeCodeExamples ?? actionPlan.includeCodeExamples ?? false;
+    // Resolve outputFormat: explicit user value > plan decision > 'summary'
+    const resolvedOutputFormat = options?.outputFormat ?? actionPlan.outputFormat ?? 'summary';
+    console.error(`[Research] Plan: ${complexity}/4, steps=${actionPlan.steps.join(', ')}, code=${resolvedIncludeCode}, format=${resolvedOutputFormat} (user=${options?.outputFormat}, plan=${actionPlan.outputFormat})`);
+    
+    // Create resolved options with planner-decided includeCodeExamples and outputFormat
+    const resolvedOptions: ResearchOptions = {
+      ...options,
+      includeCodeExamples: resolvedIncludeCode,
+      outputFormat: resolvedOutputFormat,
+    };
     currentStep++;
 
     // Step 2: Dynamic Execution (gather data)
@@ -94,7 +106,7 @@ export class ResearchController {
     const execution = await executeResearchPlan({
       query, enrichedContext, depth: complexity, actionPlan,
       context7Client: this.context7Client?.client || null,
-      options,
+      options: resolvedOptions,
       env: this.env,
     });
     currentStep++;
@@ -120,7 +132,7 @@ export class ResearchController {
       query,
       enrichedWithManifest,
       execution,
-      { ...options, depth: complexity }
+      { ...resolvedOptions, depth: complexity }
     );
     currentStep++;
 
@@ -141,7 +153,7 @@ export class ResearchController {
           query,
           enrichedWithManifest,
           execution,
-          options
+          resolvedOptions
         );
         
         // Re-verify after re-roll (max 1 iteration)
@@ -166,9 +178,9 @@ export class ResearchController {
     console.error('[Research] Running challenge + consensus in parallel...');
     const challengeContext = {
       enrichedContext,
-      constraints: options?.constraints,
-      subQuestions: options?.subQuestions,
-      includeCodeExamples: options?.includeCodeExamples ?? false,  // Domain-aware validation
+      constraints: resolvedOptions?.constraints,
+      subQuestions: resolvedOptions?.subQuestions,
+      includeCodeExamples: resolvedOptions.includeCodeExamples,  // Already resolved from plan
       // Include valid sources so challenger knows which citations are legitimate
       validSources: {
         arxivPapers: execution.arxivPapers?.papers?.map(p => ({ id: p.id, title: p.title })),
@@ -260,7 +272,7 @@ export class ResearchController {
           emitProgress('Re-synthesis', 40, 'Cross-section issues detected - full re-synthesis required.');
           console.error('[Research] Global issues detected - full re-synthesis with gaps...');
           synthesisOutput = await this.resynthesizeWithGaps(
-            query, enrichedContext, execution, options, sufficiency.criticalGaps, complexity
+            query, enrichedContext, execution, resolvedOptions, sufficiency.criticalGaps, complexity
           );
         } else {
           // Specific sections failed (including overview) → targeted re-roll
@@ -272,7 +284,7 @@ export class ResearchController {
             sufficiency.failingSections,
             allCritiques,
             execution,
-            options
+            resolvedOptions
           );
         }
         
@@ -306,7 +318,7 @@ export class ResearchController {
             this.env.GEMINI_API_KEY,
             sectionContents,
             query,
-            { includeCodeExamples: options?.includeCodeExamples, constraints: options?.constraints }
+            { includeCodeExamples: resolvedOptions.includeCodeExamples, constraints: resolvedOptions?.constraints }
           );
           
           // Merge: new critiques for re-rolled sections + cached critiques for unchanged sections
@@ -406,6 +418,7 @@ export class ResearchController {
     const result: ResearchResult = {
       query, complexity, complexityReasoning: actionPlan.reasoning,
       actionPlan, execution, synthesis: synthesisOutput, consensus, challenge, sufficiency, improved,
+      outputFormat: resolvedOptions.outputFormat,
     };
 
     // Format markdown from structured data

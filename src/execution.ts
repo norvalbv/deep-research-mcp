@@ -18,7 +18,7 @@ export interface ExecutionContext {
     includeCodeExamples?: boolean;
     techStack?: string[];
     papersRead?: string[];
-    outputFormat?: 'summary' | 'detailed' | 'actionable_steps';
+    outputFormat?: 'summary' | 'detailed' | 'actionable_steps' | 'direct';
   };
   env?: Record<string, string>;
 }

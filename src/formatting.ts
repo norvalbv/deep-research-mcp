@@ -37,15 +37,28 @@ export interface ResearchResult {
   challenge?: ChallengeResult;
   sufficiency?: SufficiencyVote;
   improved?: boolean;  // True if synthesis was re-run after critique won
+  outputFormat?: 'summary' | 'detailed' | 'actionable_steps' | 'direct';  // Controls rendering style
 }
 
 /**
  * Format research result as markdown from structured synthesis
  * Renders the structured JSON output into clean markdown for display
  * 
+ * Output format controls rendering:
+ * - 'direct': Answer-only, no wrapper/headers/citations (for strict format constraints)
+ * - 'summary': Overview + sub-questions, omits Academic Papers/Sources/Validation
+ * - 'detailed'/'actionable_steps': Full report with all sections
+ * 
  * Returns markdown string only (sections are built directly in controller)
  */
 export function formatMarkdown(result: ResearchResult): string {
+  const outputFormat = result.outputFormat ?? 'detailed';  // Default to detailed for backwards compatibility
+  
+  // 'direct' mode: return overview as-is, no wrapper, no citation resolving
+  if (outputFormat === 'direct') {
+    return result.synthesis.overview;
+  }
+  
   const sections: string[] = [];
 
   sections.push(`# Research Results: ${result.query}\n`);
@@ -64,13 +77,20 @@ export function formatMarkdown(result: ResearchResult): string {
     }
   }
 
-  // Additional insights
+  // Additional insights (include for all non-direct formats)
   if (result.synthesis.additionalInsights && result.synthesis.additionalInsights.trim()) {
     sections.push(`## Additional Insights\n`);
     sections.push(resolveCitations(result.synthesis.additionalInsights, result.execution));
     sections.push('');
   }
 
+  // 'summary' mode: omit Academic Papers, Sources, and Validation to reduce verbosity
+  if (outputFormat === 'summary') {
+    return sections.join('\n');
+  }
+
+  // 'detailed' and 'actionable_steps': full report with all sections
+  
   // Academic Papers - just references, not full content (already synthesized above)
   if (result.execution.arxivPapers && result.execution.arxivPapers.papers.length > 0) {
     sections.push(`## Academic Papers\n`);

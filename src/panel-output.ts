@@ -155,7 +155,7 @@ export type EnrichedContext = {
   papers_read?: string[];
   key_findings?: string[];
   rejected_approaches?: string[];
-  output_format?: 'summary' | 'detailed' | 'actionable_steps';
+  output_format?: 'summary' | 'detailed' | 'actionable_steps' | 'direct';
   include_code_examples?: boolean;
   sub_questions?: string[];
   tech_stack?: string[];

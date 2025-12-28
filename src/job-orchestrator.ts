@@ -19,7 +19,7 @@ export interface StartResearchParams {
   papers_read?: string[];
   key_findings?: string[];
   rejected_approaches?: string[];
-  output_format?: 'summary' | 'detailed' | 'actionable_steps';
+  output_format?: 'summary' | 'detailed' | 'actionable_steps' | 'direct';
   include_code_examples?: boolean;
   sub_questions?: string[];
   tech_stack?: string[];
@@ -84,7 +84,7 @@ export async function startResearchJob(
   const actionPlan = await controller.plan(query, enrichedContext, depth_level as ComplexityLevel, {
     subQuestions: params.sub_questions || [],
     constraints: params.constraints || [],
-    includeCodeExamples: params.include_code_examples ?? false,
+    includeCodeExamples: params.include_code_examples,  // undefined = let planner decide
     techStack: params.tech_stack || [],
     papersRead: params.papers_read || [],
     outputFormat: params.output_format || 'summary',
@@ -132,7 +132,7 @@ async function executeResearchInBackground(
       options: {
         subQuestions: params.sub_questions || [],
         constraints: params.constraints || [],
-        includeCodeExamples: params.include_code_examples ?? false,
+        includeCodeExamples: params.include_code_examples,  // undefined = let planner decide
         techStack: params.tech_stack || [],
         papersRead: params.papers_read || [],
         outputFormat: params.output_format || 'summary',

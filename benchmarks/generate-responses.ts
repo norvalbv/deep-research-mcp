@@ -17,10 +17,14 @@ import { ResearchController } from '../src/controller.js';
 import { queryPerplexity } from './perplexity-client.js';
 import type { TaskCategory } from './types.js';
 
+export type OutputFormat = 'summary' | 'detailed' | 'actionable_steps' | 'direct';
+
 interface DatasetSample {
   id: string;
   category: TaskCategory;
   query: string;
+  context?: string;  // Optional context for RAG-style queries
+  outputFormat?: OutputFormat;  // Per-sample output format override
   goldStandard: {
     answer: string;
     atomicFacts?: string[];
@@ -61,7 +65,11 @@ function saveDataset(dataset: Dataset): void {
   writeFileSync(datasetPath, JSON.stringify(dataset, null, 2));
 }
 
-async function generateMCPResponse(query: string, geminiApiKey: string): Promise<string> {
+async function generateMCPResponse(
+  query: string,
+  geminiApiKey: string,
+  options: { context?: string; outputFormat?: OutputFormat } = {}
+): Promise<string> {
   const controller = new ResearchController({
     GEMINI_API_KEY: geminiApiKey,
     PERPLEXITY_API_KEY: process.env.PERPLEXITY_API_KEY || '',
@@ -71,11 +79,9 @@ async function generateMCPResponse(query: string, geminiApiKey: string): Promise
   
   const result = await controller.execute({
     query,
-    enrichedContext: '',
-    depthLevel: 3, // Medium depth for benchmark consistency
+    enrichedContext: options.context ?? '',
     options: {
-      outputFormat: 'detailed',
-      includeCodeExamples: true,
+      outputFormat: options.outputFormat ?? 'summary',
     },
   });
   
@@ -84,9 +90,15 @@ async function generateMCPResponse(query: string, geminiApiKey: string): Promise
 
 async function generatePerplexityResponse(
   query: string,
-  perplexityApiKey: string
+  perplexityApiKey: string,
+  context?: string
 ): Promise<string> {
-  const response = await queryPerplexity(query, perplexityApiKey);
+  // Build query with context if provided (for RAG-style fairness)
+  const fullQuery = context
+    ? `Context:\n${context}\n\nQuestion:\n${query}\n\nRules: Use ONLY the provided context to answer.`
+    : query;
+  
+  const response = await queryPerplexity(fullQuery, perplexityApiKey);
   return response.content;
 }
 
@@ -152,39 +164,61 @@ async function main() {
   let successCount = 0;
   let errorCount = 0;
   
-  for (let i = 0; i < samplesToProcess.length; i++) {
-    const sample = samplesToProcess[i];
-    console.log(`[${i + 1}/${samplesToProcess.length}] ${sample.id}: ${sample.query.slice(0, 50)}...`);
+  const BATCH_SIZE = 5;
+  
+  for (let batchStart = 0; batchStart < samplesToProcess.length; batchStart += BATCH_SIZE) {
+    const batch = samplesToProcess.slice(batchStart, batchStart + BATCH_SIZE);
+    const batchNum = Math.floor(batchStart / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(samplesToProcess.length / BATCH_SIZE);
     
-    try {
-      // Generate MCP response (this takes ~5 minutes)
-      console.log('  Generating MCP response...');
-      const mcpResponse = await generateMCPResponse(sample.query, geminiApiKey);
+    console.log(`\nProcessing batch ${batchNum}/${totalBatches} (${batch.length} samples)...`);
+    
+    const batchPromises = batch.map(async (sample, idx) => {
+      const globalIdx = batchStart + idx;
+      const formatTag = sample.outputFormat ? ` [${sample.outputFormat}]` : '';
+      console.log(`[${globalIdx + 1}/${samplesToProcess.length}] ${sample.id}${formatTag}: ${sample.query.slice(0, 50)}...`);
       
-      // Generate Perplexity response (fast)
-      console.log('  Generating Perplexity response...');
-      const perplexityResponse = await generatePerplexityResponse(sample.query, perplexityApiKey);
-      
-      // Update sample in dataset
-      sample.responses = {
-        mcp: mcpResponse,
-        perplexity: perplexityResponse,
-        generatedAt: new Date().toISOString(),
-      };
-      
-      // Save after each successful generation (in case of interruption)
-      saveDataset(dataset);
-      
-      console.log('  Done');
-      successCount++;
-      
-    } catch (error) {
-      console.error(`  Error: ${error}`);
-      errorCount++;
+      try {
+        // Generate both responses in parallel, passing context and outputFormat
+        const [mcpResponse, perplexityResponse] = await Promise.all([
+          generateMCPResponse(sample.query, geminiApiKey, {
+            context: sample.context,
+            outputFormat: sample.outputFormat,
+          }),
+          generatePerplexityResponse(sample.query, perplexityApiKey, sample.context),
+        ]);
+        
+        // Update sample in dataset
+        sample.responses = {
+          mcp: mcpResponse,
+          perplexity: perplexityResponse,
+          generatedAt: new Date().toISOString(),
+        };
+        
+        console.log(`[${globalIdx + 1}/${samplesToProcess.length}] Done`);
+        return { success: true };
+        
+      } catch (error) {
+        console.error(`[${globalIdx + 1}/${samplesToProcess.length}] Error: ${error}`);
+        return { success: false, error };
+      }
+    });
+    
+    const results = await Promise.all(batchPromises);
+    
+    // Count successes/failures for this batch
+    results.forEach(r => {
+      if (r.success) successCount++;
+      else errorCount++;
+    });
+    
+    // Save after each batch completes
+    saveDataset(dataset);
+    
+    // Rate limiting between batches (not needed between samples since they're parallel)
+    if (batchStart + BATCH_SIZE < samplesToProcess.length) {
+      await new Promise(r => setTimeout(r, 1000));
     }
-    
-    // Rate limiting between samples
-    await new Promise(r => setTimeout(r, 1000));
   }
   
   console.log('');

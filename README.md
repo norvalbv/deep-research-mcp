@@ -219,7 +219,7 @@ The MCP server exposes five tools:
 | `rejected_approaches` | string[] | Approaches already ruled out |
 | `sub_questions` | string[] | Specific questions to answer in parallel |
 | `tech_stack` | string[] | Technologies in use (triggers Context7 docs) |
-| `output_format` | enum | `summary`, `detailed`, or `actionable_steps` |
+| `output_format` | enum | `summary`, `detailed`, `actionable_steps`, or `direct` (answer-only, no report wrapper) |
 | `include_code_examples` | boolean | Whether to fetch code examples |
 | `date_range` | string | Preferred date range (e.g., "2024-2025") |
 <!-- TODO | `for_panel` | boolean | Return structured JSON for agent-chat panel integration (includes `report_id` for citations) | -->

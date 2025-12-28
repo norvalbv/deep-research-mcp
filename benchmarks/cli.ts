@@ -117,56 +117,81 @@ async function runComparisonBenchmark(apiKey: string) {
     baselineScore: number;
   }> = [];
   
-  for (let i = 0; i < samples.length; i++) {
-    const sample = samples[i];
-    console.log(`[${i + 1}/${samples.length}] ${sample.category}: ${sample.query.slice(0, 50)}...`);
+  const BATCH_SIZE = 10;
+  
+  for (let batchStart = 0; batchStart < samples.length; batchStart += BATCH_SIZE) {
+    const batch = samples.slice(batchStart, batchStart + BATCH_SIZE);
+    const batchNum = Math.floor(batchStart / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(samples.length / BATCH_SIZE);
     
-    try {
-      // Use pre-computed responses (validated above)
-      const mcpResponse = sample.responses!.mcp!;
-      const perplexityResponse = sample.responses!.perplexity!;
+    console.log(`\nProcessing batch ${batchNum}/${totalBatches} (${batch.length} samples)...`);
+    
+    const batchPromises = batch.map(async (sample, idx) => {
+      const globalIdx = batchStart + idx;
+      console.log(`[${globalIdx + 1}/${samples.length}] ${sample.category}: ${sample.query.slice(0, 50)}...`);
       
-      const evalSample: EvaluationSample = {
-        id: sample.id,
-        type: sample.category === 'multi_hop_reasoning' ? 'multi_hop' 
-            : sample.category === 'synthesis' ? 'synthesis' : 'factual',
-        category: sample.category,
-        query: sample.query,
-        contextSources: [],
-        goldStandard: {
-          answer: sample.goldStandard.answer,
-          mustCite: sample.goldStandard.sources || [],
-          mustIdentifyConflict: false,
-          rubric: {},
-          atomicFacts: sample.goldStandard.atomicFacts,
-        },
-      };
-      
-      const comparison = await compareWithBaseline(evalSample, mcpResponse, perplexityResponse, apiKey);
-      
-      results.push({
-        sample: {
+      try {
+        // Use pre-computed responses (validated above)
+        const mcpResponse = sample.responses!.mcp!;
+        const perplexityResponse = sample.responses!.perplexity!;
+        
+        const evalSample: EvaluationSample = {
           id: sample.id,
+          type: sample.category === 'multi_hop_reasoning' ? 'multi_hop' 
+              : sample.category === 'synthesis' ? 'synthesis' : 'factual',
           category: sample.category,
           query: sample.query,
-          goldStandard: sample.goldStandard,
-          expectedWinner: sample.expectedWinner as 'mcp' | 'perplexity' | 'tie',
-          rationale: sample.rationale,
-        },
-        winner: comparison.winner,
-        systemScore: comparison.systemScore,
-        baselineScore: comparison.baselineScore,
-      });
-      
-      const winnerLabel = comparison.winner === 'system' ? 'MCP' 
-                        : comparison.winner === 'baseline' ? 'Perplexity' : 'Tie';
-      console.log(`  -> ${winnerLabel} (MCP: ${comparison.systemScore}, Perplexity: ${comparison.baselineScore})`);
-      
-    } catch (error) {
-      console.log(`  -> Error: ${error}`);
-    }
+          contextSources: [],
+          goldStandard: {
+            answer: sample.goldStandard.answer,
+            mustCite: sample.goldStandard.sources || [],
+            mustIdentifyConflict: false,
+            rubric: {},
+            atomicFacts: sample.goldStandard.atomicFacts,
+          },
+        };
+        
+        const comparison = await compareWithBaseline(evalSample, mcpResponse, perplexityResponse, apiKey);
+        
+        const result = {
+          sample: {
+            id: sample.id,
+            category: sample.category,
+            query: sample.query,
+            goldStandard: sample.goldStandard,
+            expectedWinner: sample.expectedWinner as 'mcp' | 'perplexity' | 'tie',
+            rationale: sample.rationale,
+          },
+          winner: comparison.winner,
+          systemScore: comparison.systemScore,
+          baselineScore: comparison.baselineScore,
+        };
+        
+        const winnerLabel = comparison.winner === 'system' ? 'MCP' 
+                          : comparison.winner === 'baseline' ? 'Perplexity' : 'Tie';
+        console.log(`[${globalIdx + 1}/${samples.length}] -> ${winnerLabel} (MCP: ${comparison.systemScore}, Perplexity: ${comparison.baselineScore})`);
+        
+        return { success: true, result };
+        
+      } catch (error) {
+        console.log(`[${globalIdx + 1}/${samples.length}] -> Error: ${error}`);
+        return { success: false, error };
+      }
+    });
     
-    await new Promise(r => setTimeout(r, 500));
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Collect successful results
+    batchResults.forEach(r => {
+      if (r.success && r.result) {
+        results.push(r.result);
+      }
+    });
+    
+    // Rate limiting between batches
+    if (batchStart + BATCH_SIZE < samples.length) {
+      await new Promise(r => setTimeout(r, 500));
+    }
   }
   
   console.log('\nGenerating decision matrix...\n');

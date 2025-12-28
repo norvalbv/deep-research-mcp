@@ -15,7 +15,7 @@ export interface SynthesisOptions {
   papersRead?: string[];
   rejectedApproaches?: string[];
   keyFindings?: string[];
-  outputFormat?: 'summary' | 'detailed' | 'actionable_steps';
+  outputFormat?: 'summary' | 'detailed' | 'actionable_steps' | 'direct';
   includeCodeExamples?: boolean;
   depth?: number;  // Complexity level 1-5, gates features like code examples
 }
@@ -240,6 +240,33 @@ ${extractContent(execution.deepThinking).slice(0, 2000)}
   const codeRequirement = options?.includeCodeExamples
     ? 'Include working code examples with complete implementations'
     : 'Do NOT include code examples - focus on concepts and analysis';
+
+  // Handle 'direct' output format - answer-only with strict format compliance
+  if (options?.outputFormat === 'direct') {
+    sections.push(`---
+
+**YOUR TASK:**
+
+Output ONLY the direct answer to the query. Follow ANY format constraints in the query EXACTLY.
+
+**CRITICAL FORMAT RULES:**
+1. NO headers (no #, ##, etc.)
+2. NO section delimiters (no <!-- SECTION:... -->)
+3. NO "Additional Insights" or extra commentary
+4. NO source citations unless explicitly requested
+5. NO introductory phrases like "Here is..." or "The answer is..."
+6. If the query specifies a word count, bullet count, or structure - follow it EXACTLY
+7. Output the answer directly, nothing else
+
+**Examples of strict format compliance:**
+- "List 3 items" → Output exactly 3 items, no more, no less
+- "Exactly 50 words" → Output exactly 50 words
+- "One word each" → Each item is exactly one word
+- "JSON only" → Output valid JSON, no prose
+- "Table format" → Output the table, no surrounding text
+`);
+    return sections.join('\n');
+  }
 
   if (mainQueryOnly) {
     sections.push(`---
