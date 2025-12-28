@@ -182,9 +182,12 @@ ${options?.maxDepth ? `4. **HARD CAP**: User requested max depth ${options.maxDe
 ## OUTPUT FORMAT DECISION
 Set "output_format" based on query requirements:
 - **"direct"**: Query requires SPECIFIC OUTPUT FORMAT (e.g., "list 3 items", "exactly 50 words", "one word each", "JSON only", "no prose", specific table structure). Output ONLY the answer, no report wrapper.
-- **"summary"**: Default for most queries. Brief overview with key findings.
-- **"detailed"**: Query explicitly asks for comprehensive/thorough analysis.
+- **"summary"**: Simple factual queries, single-answer questions, quick lookups. Optimize for brevity.
+- **"detailed"**: Comparisons, tradeoffs, synthesis, best-practices, evaluations, or any query asking "compare", "what are the tradeoffs", "pros and cons", "which is better". Also for explicit requests for thoroughness.
 - **"actionable_steps"**: Query asks for implementation guide or step-by-step instructions.
+
+## SIGNALS GUIDANCE
+- Set "signals.needs_code" to **true ONLY if the query explicitly asks for code/implementation**. Otherwise false.
 
 ## OUTPUT FORMAT
 Return ONLY valid JSON, no explanation:

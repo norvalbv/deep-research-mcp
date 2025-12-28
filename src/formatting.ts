@@ -86,6 +86,14 @@ export function formatMarkdown(result: ResearchResult): string {
 
   // 'summary' mode: omit Academic Papers, Sources, and Validation to reduce verbosity
   if (outputFormat === 'summary') {
+    // Include sources in summary for transparency, but keep the rest of the report compact.
+    if (result.execution.perplexityResult?.sources && result.execution.perplexityResult.sources.length > 0) {
+      sections.push(`## Sources\n`);
+      result.execution.perplexityResult.sources.forEach((source, i) => {
+        sections.push(`${i + 1}. ${source}`);
+      });
+      sections.push('');
+    }
     return sections.join('\n');
   }
 

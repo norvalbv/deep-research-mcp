@@ -84,10 +84,9 @@ export async function startResearchJob(
   const actionPlan = await controller.plan(query, enrichedContext, depth_level as ComplexityLevel, {
     subQuestions: params.sub_questions || [],
     constraints: params.constraints || [],
-    includeCodeExamples: params.include_code_examples,  // undefined = let planner decide
-    techStack: params.tech_stack || [],
+    includeCodeExamples: params.include_code_examples,
     papersRead: params.papers_read || [],
-    outputFormat: params.output_format || 'summary',
+    outputFormat: params.output_format,
   });
 
   const determinedDepth = depth_level || actionPlan.complexity;
@@ -132,10 +131,10 @@ async function executeResearchInBackground(
       options: {
         subQuestions: params.sub_questions || [],
         constraints: params.constraints || [],
-        includeCodeExamples: params.include_code_examples,  // undefined = let planner decide
+        includeCodeExamples: params.include_code_examples,
         techStack: params.tech_stack || [],
         papersRead: params.papers_read || [],
-        outputFormat: params.output_format || 'summary',
+        outputFormat: params.output_format,
       },
       onProgress,
     });

@@ -36,6 +36,17 @@ export interface SynthesisOutput {
 // Section delimiter pattern: <!-- SECTION:name -->
 const SECTION_DELIMITER = /<!--\s*SECTION:(\w+)\s*-->/g;
 
+function getSynthesisMaxOutputTokens(options?: SynthesisOptions): number {
+  const depth = options?.depth ?? 5;
+  const outputFormat = options?.outputFormat ?? 'summary';
+  const includeCode = Boolean(options?.includeCodeExamples && depth >= 3);
+
+  // Keep synthesis concise by default (benchmark + UX); allow more budget only when code is requested.
+  if (includeCode) return 6000;
+  if (outputFormat === 'detailed' || outputFormat === 'actionable_steps') return 2400;
+  return 1200; // 'summary' | 'direct'
+}
+
 /**
  * Synthesize all gathered research data into a unified, context-aware answer
  * Automatically uses phased synthesis if sub-questions exist (for token efficiency)
@@ -69,7 +80,7 @@ export async function synthesizeFindings(
       model: 'gemini-2.5-flash-lite',
       apiKey: geminiKey,
       timeout: 120000,
-      maxOutputTokens: 32000,
+      maxOutputTokens: getSynthesisMaxOutputTokens(options),
       temperature: 0.2  // Lower for deterministic, specific outputs
     });
     
@@ -96,6 +107,13 @@ function buildSynthesisPrompt(
   sections.push(`You are synthesizing research findings${mainQueryOnly ? ' for the MAIN QUERY ONLY (sub-questions handled separately)' : ''}.
 
 **PERSONA**: Act as a senior production engineer delivering deployable solutions.
+
+**CRITICAL: CONCISENESS REQUIREMENT**
+- Target 300-500 words total (excluding code blocks)
+- Information density over verbosity - every sentence must add unique value
+- Cut filler phrases: "It's important to note that", "In conclusion", "Additionally"
+- Use bullet points and tables to compress information
+- One clear recommendation, not exhaustive lists
 
 **${mainQueryOnly ? 'Main Research Query' : 'Original Research Query'}:** ${query}
 `);
@@ -181,17 +199,20 @@ def process_data(data):
 
   if (execution.perplexityResult?.content) {
     // Format sources with numbered references for easier citation
-    const sourcesFormatted = execution.perplexityResult.sources?.length
-      ? execution.perplexityResult.sources.map((url, i) => `[${i + 1}] ${url}`).join('\n')
+    const sources = execution.perplexityResult.sources ?? [];
+    const sourceCount = sources.length;
+    const sourcesFormatted = sourceCount
+      ? sources.map((url, i) => `[${i + 1}] ${url}`).join('\n')
       : 'Not available';
     
     sections.push(`**Web Search${mainQueryOnly ? '' : ' Results'} [perplexity]:**
-${execution.perplexityResult.content.slice(0, 3000)}
+${execution.perplexityResult.content.slice(0, (options?.depth ?? 5) >= 3 ? 6000 : 3000)}
 
 **Sources (cite as [perplexity:N] where N is the source number):**
 ${sourcesFormatted}
 
 **CITATION FORMAT:** When citing web findings, use [perplexity:1], [perplexity:2], etc. based on the source numbers above.
+${sourceCount ? `**CRITICAL:** Only use [perplexity:N] where N is 1..${sourceCount}. Do NOT cite outside this range.` : ''}
 `);
   }
 
@@ -268,52 +289,58 @@ Output ONLY the direct answer to the query. Follow ANY format constraints in the
     return sections.join('\n');
   }
 
+  const isSummary = options?.outputFormat === 'summary';
+
   if (mainQueryOnly) {
     sections.push(`---
 
 **YOUR TASK:**
 
-Write a comprehensive answer to the main query. Be thorough and detailed.
+Write a ${isSummary ? 'concise (200-300 words)' : 'focused (300-500 words)'} answer. Prioritize information density over completeness.
 
 **Requirements:**
-1. Use exact numbers with units (">85% accuracy", "<200ms latency")
-2. Pick ONE clear recommendation when multiple options exist
-3. ${codeRequirement}
-4. Use inline citations: [perplexity:N], [context7:library], [arxiv:id]
-5. Be thorough - don't truncate or cut off mid-sentence
+1. **For comparisons:** Use a **markdown table** (columns: approaches, rows: key tradeoffs)
+2. **Preserve specific names:** Use EXACT framework/tool names (e.g., RAGAS, RLHF, DPO) - never "various methods"
+3. Use exact numbers with units (e.g., ">85% accuracy", "<200ms latency")
+4. Pick ONE clear recommendation
+5. ${codeRequirement}
+6. Inline citations: [perplexity:N], [context7:library], [arxiv:id]
+7. Cut filler - every sentence must add unique information
 `);
   } else {
     // Build section format instructions for full synthesis
     const subQuestionSections = options?.subQuestions?.length
       ? options.subQuestions.map((q, i) => `<!-- SECTION:q${i + 1} -->
 ## Q${i + 1}: ${q}
-[Comprehensive answer - multiple paragraphs with examples]`).join('\n\n')
+${isSummary ? '[Concise, information-dense answer]' : '[Comprehensive answer - multiple paragraphs with examples]'}`
+      ).join('\n\n')
       : '';
 
     sections.push(`---
 
 **YOUR TASK:**
 
-Synthesize ALL the above research into a **unified, cohesive answer** using this EXACT format with section delimiters:
+Synthesize research into a **concise, information-dense answer** (300-500 words total) using this format:
 
 <!-- SECTION:overview -->
 ## Overview
-[Comprehensive answer to the main query - multiple paragraphs, be thorough and detailed]
+[${isSummary ? '150-250 words' : '200-350 words'} - focus on answering the query directly]
 
 ${subQuestionSections}
 
 <!-- SECTION:additional_insights -->
 ## Additional Insights
-[Optional: extra recommendations, caveats, or implementation tips]
+[Optional: max 3 bullets, skip if nothing important to add]
 
 **Requirements:**
 1. Use EXACT section delimiters: <!-- SECTION:name -->
-2. Use exact numbers with units (">85% accuracy", "<200ms latency")
-3. Pick ONE clear recommendation when multiple options exist
-4. ${codeRequirement}
-5. Inline citations: [perplexity:N], [context7:library], [arxiv:id]
-6. Keep logic consistent across sections (if overview uses "X OR Y", sub-questions must too)
-7. Be thorough - don't truncate mid-sentence
+2. **For comparisons:** Use a **markdown table** (compact, key tradeoffs only)
+3. **Preserve specific names:** Use EXACT framework/tool names - never generalize
+4. Use exact numbers with units (e.g., ">85% accuracy", "<200ms latency")
+5. Pick ONE clear recommendation
+6. ${codeRequirement}
+7. ${isSummary ? 'Inline citations sparingly. No Sources section.' : 'Inline citations: [perplexity:N], [context7:library], [arxiv:id]'}
+8. Cut filler phrases - every sentence must add unique value
 `);
   }
 
@@ -395,7 +422,7 @@ async function synthesizePhased(
     model: 'gemini-2.5-flash-lite',
     apiKey: geminiKey,
     timeout: 60000,
-    maxOutputTokens: 16000,
+    maxOutputTokens: getSynthesisMaxOutputTokens(options),
     temperature: 0.2  // Lower for deterministic, specific outputs
   });
 
@@ -541,16 +568,14 @@ ${sharedLibraryDocs.slice(0, 1500)}
 
 **YOUR TASK:**
 
-Answer the sub-question thoroughly. Ensure your answer:
-- Aligns with the key findings above (don't contradict)
-- Uses inline citations: [perplexity:url], [context7:library], [arxiv:id]
-${codeInstruction}
-- Leverages academic papers if relevant to this specific question
-- Is comprehensive and detailed
+Answer in 150-250 words. Be direct and information-dense.
 
 **Requirements:**
-- Match the logic from key findings (if overview uses OR, you must too)
-- Be thorough - don't truncate mid-sentence`);
+- Align with key findings (don't contradict)
+- Inline citations: [perplexity:url], [context7:library], [arxiv:id]
+${codeInstruction}
+- Cut filler phrases - every sentence adds unique value
+- Match logic from key findings`);
 
   const response = await callLLM(sections.join('\n'), {
     provider: 'gemini',

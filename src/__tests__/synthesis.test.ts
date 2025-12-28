@@ -189,11 +189,11 @@ describe('Output Format Rendering', () => {
       expect(markdown).toContain('## Additional Insights');
     });
 
-    it('omits Sources and Validation sections', () => {
+    it('includes Sources but omits Validation and Academic Papers sections', () => {
       const result = createMockResult({ outputFormat: 'summary' });
       const markdown = formatMarkdown(result);
       
-      expect(markdown).not.toContain('## Sources');
+      expect(markdown).toContain('## Sources');
       expect(markdown).not.toContain('## Validation');
       expect(markdown).not.toContain('## Academic Papers');
     });

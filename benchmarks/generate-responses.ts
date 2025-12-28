@@ -7,6 +7,7 @@
  * Usage:
  *   npm run benchmark:generate              # Generate all missing responses
  *   npm run benchmark:generate:sample       # Generate 5 samples (quick test)
+ *   npm run benchmark:generate -- --category synthesis --force   # Regenerate only synthesis samples
  */
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -68,7 +69,7 @@ function saveDataset(dataset: Dataset): void {
 async function generateMCPResponse(
   query: string,
   geminiApiKey: string,
-  options: { context?: string; outputFormat?: OutputFormat } = {}
+  options: { context?: string; outputFormat?: OutputFormat; depthLevel?: 1 | 2 | 3 | 4 } = {}
 ): Promise<string> {
   const controller = new ResearchController({
     GEMINI_API_KEY: geminiApiKey,
@@ -80,8 +81,9 @@ async function generateMCPResponse(
   const result = await controller.execute({
     query,
     enrichedContext: options.context ?? '',
+    depthLevel: options.depthLevel,
     options: {
-      outputFormat: options.outputFormat ?? 'summary',
+      outputFormat: options.outputFormat,
     },
   });
   
@@ -118,6 +120,16 @@ function hasValidResponses(sample: DatasetSample, maxAgeDays = 30): boolean {
   return ageDays <= maxAgeDays;
 }
 
+function getArgValue(flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) return undefined;
+  const value = process.argv[idx + 1];
+  if (!value || value.startsWith('-')) {
+    throw new Error(`Missing value for ${flag}`);
+  }
+  return value;
+}
+
 async function main() {
   const geminiApiKey = process.env.GEMINI_API_KEY;
   const perplexityApiKey = process.env.PERPLEXITY_API_KEY;
@@ -131,6 +143,7 @@ async function main() {
   
   const sampleLimit = parseInt(process.env.SAMPLE_LIMIT || '0', 10);
   const forceRegenerate = process.argv.includes('--force');
+  const categoryFilter = getArgValue('--category');
   
   console.log('='.repeat(60));
   console.log('Response Generation for Comparative Benchmarking');
@@ -140,6 +153,11 @@ async function main() {
   
   const dataset = loadDataset();
   let samplesToProcess = dataset.samples;
+
+  // Optional category filter
+  if (categoryFilter) {
+    samplesToProcess = samplesToProcess.filter(s => s.category === categoryFilter);
+  }
   
   // Filter to samples needing responses (unless --force)
   if (!forceRegenerate) {
@@ -154,6 +172,7 @@ async function main() {
   console.log(`Total samples in dataset: ${dataset.samples.length}`);
   console.log(`Samples to process: ${samplesToProcess.length}`);
   console.log(`Force regenerate: ${forceRegenerate}`);
+  if (categoryFilter) console.log(`Category filter: ${categoryFilter}`);
   console.log('');
   
   if (samplesToProcess.length === 0) {
@@ -164,7 +183,7 @@ async function main() {
   let successCount = 0;
   let errorCount = 0;
   
-  const BATCH_SIZE = 5;
+  const BATCH_SIZE = 10;
   
   for (let batchStart = 0; batchStart < samplesToProcess.length; batchStart += BATCH_SIZE) {
     const batch = samplesToProcess.slice(batchStart, batchStart + BATCH_SIZE);
@@ -175,7 +194,9 @@ async function main() {
     
     const batchPromises = batch.map(async (sample, idx) => {
       const globalIdx = batchStart + idx;
-      const formatTag = sample.outputFormat ? ` [${sample.outputFormat}]` : '';
+      const outputFormat = sample.outputFormat ?? (sample.category === 'synthesis' ? 'summary' : undefined);
+      const depthLevel = sample.category === 'synthesis' ? 4 : undefined;
+      const formatTag = outputFormat ? ` [${outputFormat}]` : '';
       console.log(`[${globalIdx + 1}/${samplesToProcess.length}] ${sample.id}${formatTag}: ${sample.query.slice(0, 50)}...`);
       
       try {
@@ -183,7 +204,8 @@ async function main() {
         const [mcpResponse, perplexityResponse] = await Promise.all([
           generateMCPResponse(sample.query, geminiApiKey, {
             context: sample.context,
-            outputFormat: sample.outputFormat,
+            outputFormat,
+            depthLevel,
           }),
           generatePerplexityResponse(sample.query, perplexityApiKey, sample.context),
         ]);

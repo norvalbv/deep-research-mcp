@@ -117,7 +117,7 @@ async function runComparisonBenchmark(apiKey: string) {
     baselineScore: number;
   }> = [];
   
-  const BATCH_SIZE = 10;
+  const BATCH_SIZE = 35;
   
   for (let batchStart = 0; batchStart < samples.length; batchStart += BATCH_SIZE) {
     const batch = samples.slice(batchStart, batchStart + BATCH_SIZE);

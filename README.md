@@ -597,6 +597,9 @@ This project includes comprehensive benchmarking tools to compare MCP research q
 npm run benchmark:generate              # Generate only missing responses
 npm run benchmark:generate:new-set      # Clear all responses and start fresh
 
+# Regenerate only a single category (useful for iterating on a category). Example:
+npm run benchmark:generate -- --category synthesis --force
+
 # Run full benchmark comparison (generates new results)
 npm run benchmark:compare
 
@@ -610,6 +613,7 @@ npm run benchmark:compare-results
 **Response Generation Options:**
 - `benchmark:generate` - Only generates responses for samples that don't have them yet (incremental)
 - `benchmark:generate:new-set` - Clears ALL existing responses and regenerates from scratch (use after codebase changes)
+- `benchmark:generate -- --category <name> --force` - Regenerate only one category (e.g., `synthesis`) regardless of response age
 
 This allows you to:
 1. Make changes to your research codebase

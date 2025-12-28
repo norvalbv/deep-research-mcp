@@ -1,4 +1,4 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { perplexitySearch } from './services/perplexity.js';
 import { arxivSearch, ArxivPaper, ArxivResult } from './services/arxiv.js';
 import { callLLM } from './clients/llm.js';
@@ -71,7 +71,8 @@ export async function executeResearchPlan(ctx: ExecutionContext): Promise<Execut
   const depth = ctx.depth;
   const shouldRunPerplexity = actionPlan.steps.some(s => s.includes('perplexity') || s.includes('web'));
   const shouldRunDeepThinking = depth >= 2 && actionPlan.steps.some(s => s.includes('deep') || s.includes('thinking'));
-  const shouldRunArxiv = depth >= 4 && actionPlan.steps.some(s => s.includes('arxiv') || s.includes('papers')) && !actionPlan.toolsToSkip?.includes('arxiv_search');
+  // Depth 4 explicitly enables arXiv unless the planner opted out via toolsToSkip.
+  const shouldRunArxiv = depth >= 4 && !actionPlan.toolsToSkip?.includes('arxiv_search');
   const shouldRunContext7Main = depth >= 3 && actionPlan.steps.some(s => s.includes('context7') || s.includes('library') || s.includes('docs'));
   
   console.error(`[Exec] Depth ${depth}: perplexity=${shouldRunPerplexity}, deep=${shouldRunDeepThinking}, context7=${shouldRunContext7Main}, arxiv=${shouldRunArxiv}`);
