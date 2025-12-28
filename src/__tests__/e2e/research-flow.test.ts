@@ -8,9 +8,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { extractCitations, parseSections, extractCodeBlocks } from '../synthesis.test.js';
 import { aggregateVotesHCSP } from '../../validation.js';
-import { validateSourceCitations } from '../validation.test.js';
+import { extractCitations, parseSections, extractCodeBlocks } from '../helpers/markdown-structural.js';
+import { validateSourceCitations } from '../helpers/source-citations.js';
 
 // ============================================================================
 // Mock Research Output

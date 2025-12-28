@@ -14,6 +14,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { safeParseJSON, parseVoteResponse, aggregateVotesHCSP } from '../validation.js';
+import { validateSourceCitations } from './helpers/source-citations.js';
 
 // ============================================================================
 // safeParseJSON - Robust JSON Parsing for LLM Output
@@ -327,46 +328,6 @@ describe('aggregateVotesHCSP (threshold aggregation)', () => {
 // Source Citation Validation (Structural - checking against known list)
 // ============================================================================
 
-/**
- * Validates that citations reference known/valid sources
- */
-export function validateSourceCitations(
-  text: string,
-  validSources: { arxivIds: string[]; perplexitySources: string[] }
-): {
-  validCitations: string[];
-  invalidCitations: string[];
-} {
-  const arxivCitations = text.match(/\[arxiv:([\w\d.]+v?\d*)\]/g) || [];
-  const perplexityCitations = text.match(/\[perplexity:(\d+)\]/g) || [];
-  
-  const validCitations: string[] = [];
-  const invalidCitations: string[] = [];
-  
-  for (const citation of arxivCitations) {
-    const id = citation.match(/arxiv:([\w\d.]+v?\d*)/)?.[1] || '';
-    const isValid = validSources.arxivIds.some(
-      validId => validId.includes(id) || id.includes(validId)
-    );
-    if (isValid) {
-      validCitations.push(citation);
-    } else {
-      invalidCitations.push(citation);
-    }
-  }
-  
-  for (const citation of perplexityCitations) {
-    const num = parseInt(citation.match(/perplexity:(\d+)/)?.[1] || '0');
-    if (num > 0 && num <= validSources.perplexitySources.length) {
-      validCitations.push(citation);
-    } else {
-      invalidCitations.push(citation);
-    }
-  }
-  
-  return { validCitations, invalidCitations };
-}
-
 describe('Source Citation Validation', () => {
   it('validates known arxiv citations', () => {
     const text = 'According to [arxiv:2309.01431v2], this works.';
@@ -458,11 +419,4 @@ describe('Challenge Response Parsing - Section Attribution', () => {
 // Stub for compatibility - semantic detection requires LLM
 // ============================================================================
 
-export function detectContradictions(_claims: Array<{ section: string; claim: string }>): {
-  contradictions: Array<{ claimA: any; claimB: any; reason: string }>;
-  entailmentScore: number;
-} {
-  // NOTE: Contradiction detection requires LLM-as-a-Judge, not regex.
-  console.warn('detectContradictions: Use LLM-as-a-Judge for semantic evaluation');
-  return { contradictions: [], entailmentScore: 1 };
-}
+// (No exports from this file; shared helpers live in __tests__/helpers/*)
