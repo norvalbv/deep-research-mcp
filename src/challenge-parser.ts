@@ -28,6 +28,24 @@ interface ChallengeJSON {
 }
 
 /**
+ * Valid section IDs (LLMs sometimes hallucinate checklist names as sections)
+ */
+const VALID_SECTION_PATTERN = /^(overview|global|q\d+)$/;
+
+/**
+ * Normalize section ID to a valid value.
+ * Invalid sections (like "Code Completeness") get mapped to "overview".
+ */
+function normalizeSectionId(section: string | undefined): string {
+  if (!section || typeof section !== 'string') return 'overview';
+  const lower = section.toLowerCase().trim();
+  if (VALID_SECTION_PATTERN.test(lower)) return lower;
+  // Map invalid sections to 'overview' with a log
+  console.error(`[Parser] Invalid section ID "${section}" mapped to "overview"`);
+  return 'overview';
+}
+
+/**
  * Normalize a critique item into { section, issue } format.
  */
 function normalizeCritique(c: unknown): ChallengeCritique | null {
@@ -35,7 +53,7 @@ function normalizeCritique(c: unknown): ChallengeCritique | null {
     const obj = c as { section?: string; issue?: string };
     if (typeof obj.issue === 'string') {
       return {
-        section: (typeof obj.section === 'string' && obj.section) ? obj.section : 'overview',
+        section: normalizeSectionId(obj.section),
         issue: obj.issue,
       };
     }

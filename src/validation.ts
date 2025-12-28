@@ -182,25 +182,26 @@ ${codeChecks} - **Decision Clarity**: Is there ONE clear recommendation per choi
 3. What sub-questions were poorly answered?
 4. Are there CONTRADICTIONS between sections?
 
-**SECTION IDs:**
-- "overview" = main answer/query coverage issues
-- "q1", "q2", etc. = specific sub-question issues (match the sub-question number)
+**VALID SECTION IDs (ONLY use these):**
+- "overview" = main answer, query coverage, cross-section, or constraint issues
+- "q1", "q2", "q3", etc. = sub-question-specific issues (match the sub-question number)
+- "global" = issues spanning multiple sections that cannot be attributed to one
 
 **RESPONSE FORMAT (JSON ONLY):**
 
 If ALL items pass:
 {"pass":true,"critiques":[]}
 
-If ANY items fail (include section for EACH critique):
+If ANY items fail:
 {"pass":false,"critiques":[
   {"section":"overview","issue":"Query not fully addressed - missing X"},
   {"section":"q2","issue":"Contradicts overview on metric value"}
 ]}
 
-RULES:
-- Each critique MUST have "section" and "issue" fields
-- Use "overview" for query-level, constraint, or cross-section issues
-- Use "q1", "q2", etc. for sub-question-specific issues
+STRICT RULES:
+- "section" MUST be exactly one of: "overview", q[1-N] (e.g., "q1", "q2", etc.), or "global"
+- DO NOT use checklist names as sections (e.g., "Code Completeness" is INVALID)
+- Attribute each critique to the specific section where the issue appears
 
 Return ONLY valid JSON. No other text.`.trim();
 }
